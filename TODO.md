@@ -1,9 +1,9 @@
 # TODO
 
 ## Where we stopped
-ADR 3 (Rust stack) is implemented: a Cargo workspace with `pkg/dummy` and `xtask`.
-`cargo xtask check` is green locally: fmt, clippy `-D warnings`, 33 tests, docs,
-cargo-deny, and 100% branch coverage (gate at 90%).
+Nothing in progress. ADR 3 (Rust stack) is done and pushed: `main` at `caa6494`, CI green.
+A Cargo workspace with `pkg/dummy` and `xtask`; `cargo xtask check` passes locally and in
+CI: fmt, clippy `-D warnings`, 33 tests, docs, cargo-deny, 100% branch coverage (gate 90%).
 Verified: each gate fails when broken on purpose (unwrap → clippy, `fs::read` in a pure
 module → disallowed method, dropped test → coverage below 90%).
 Local env note: the mise shims ignore `rust-toolchain.toml`; a gitignored

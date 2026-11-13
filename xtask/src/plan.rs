@@ -152,6 +152,7 @@ fn setup(toolchain_only: bool) -> Vec<Step> {
         &[
             "toolchain",
             "install",
+            "--no-self-update",
             NIGHTLY,
             "--profile",
             "minimal",
