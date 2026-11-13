@@ -30,12 +30,8 @@ enum Cmd {
     Check,
     /// Measure branch coverage, write `lcov.info` and `coverage/html/`, apply the gate.
     Cov,
-    /// Install the coverage nightly and the pinned cargo tools.
-    Setup {
-        /// Only install the nightly toolchain (the tools are already on `PATH`).
-        #[arg(long)]
-        toolchain_only: bool,
-    },
+    /// Install the coverage nightly (run `mise install` first for everything else).
+    Setup,
     /// Enable the versioned git hooks in `.githooks/`.
     InstallHooks,
 }
@@ -45,7 +41,7 @@ impl From<Cmd> for Task {
         match command {
             Cmd::Check => Self::Check,
             Cmd::Cov => Self::Coverage,
-            Cmd::Setup { toolchain_only } => Self::Setup { toolchain_only },
+            Cmd::Setup => Self::Setup,
             Cmd::InstallHooks => Self::InstallHooks,
         }
     }

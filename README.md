@@ -25,11 +25,12 @@ with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
 
 ## Develop
 
-Rust workspace, pinned toolchain (`rust-toolchain.toml`), details in
+Rust workspace; every tool version is pinned in `mise.toml`. Details in
 [ADR 3](docs/architecture_decision_records/2026-11-13-adr3-rust-stack.md).
 
 ```sh
-cargo xtask setup          # once: coverage nightly, cargo-llvm-cov, cargo-deny
+mise install               # once: Rust, cargo-deny, cargo-llvm-cov
+cargo xtask setup          # once: coverage nightly
 cargo xtask install-hooks  # once: pre-commit runs every gate
 cargo dummy                # count files, lines, and chars in the current directory
 cargo test                 # run the tests

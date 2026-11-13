@@ -1,5 +1,0 @@
-# Latest stable release. Official toolchains are exempt from the cooldown (ADR 3).
-[toolchain]
-channel = "1.100.0"
-components = ["clippy", "rustfmt"]
-profile = "minimal"

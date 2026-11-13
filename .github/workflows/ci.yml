@@ -19,13 +19,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Tool versions must match `xtask/src/plan.rs`.
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
-        with:
-          tool: cargo-llvm-cov@0.9.1,cargo-deny@0.20.2
-      - name: Install the pinned stable toolchain (rust-toolchain.toml)
-        run: rustup toolchain install
+      # Installs every tool pinned in mise.toml: Rust, cargo-deny, cargo-llvm-cov.
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
       - name: Install the coverage nightly
-        run: cargo xtask setup --toolchain-only
+        run: cargo xtask setup
       - name: Run every gate
         run: cargo xtask check

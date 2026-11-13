@@ -36,6 +36,8 @@ proposing features.
 
 ## Layout
 
+- `mise.toml`: the only place for language and tool versions (Rust, cargo tools). Never
+  add `rust-toolchain.toml`, `.tool-versions`, or `cargo install` steps.
 - Cargo workspace: products in `pkg/<name>/`, automation in `xtask/`. Lints, versions,
   and package metadata are inherited from the root `Cargo.toml`.
 - `pkg/dummy/`: toolchain smoke test (counts files, lines, chars); not a product.
@@ -80,4 +82,4 @@ proposing features.
 - `cargo xtask check`: every gate (fmt, clippy `-D warnings`, test, doc, cargo-deny,
   90% branch coverage). It must pass before every commit; the pre-commit hook runs it.
 - `cargo xtask cov`: branch coverage only; writes `lcov.info` and `coverage/html/`.
-- `cargo xtask setup`, then `cargo xtask install-hooks`: once per clone.
+- `mise install`, `cargo xtask setup`, then `cargo xtask install-hooks`: once per clone.

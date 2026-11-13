@@ -9,7 +9,7 @@
 
 | Component                                   | Status     | Location                              |
 | ------------------------------------------- | ---------- | ------------------------------------- |
-| Cargo workspace, pinned toolchains          | ✅ Done    | `Cargo.toml`, `rust-toolchain.toml`   |
+| Cargo workspace, tool versions in mise      | ✅ Done    | `Cargo.toml`, `mise.toml`             |
 | Lint, format, complexity, effect policy     | ✅ Done    | `Cargo.toml`, `clippy.toml`, `rustfmt.toml` |
 | Supply-chain gate                           | ✅ Done    | `deny.toml`, `Cargo.lock`             |
 | 90% branch-coverage gate                    | ✅ Done    | `xtask/src/coverage.rs`               |
@@ -24,6 +24,8 @@ The auditor must ship as a dependable CI tool, so its own codebase has to meet t
 will enforce on others. Requirements:
 
 - A monorepo with no special tooling: no Nx, moon, Bazel, or task-runner binaries.
+- Language and tool versions managed per repository with mise (`mise.toml`), the
+  convention across these repositories.
 - Current Rust, with the strictest lint, format, and safety settings available.
 - Low complexity, idiomatic Rust, and a functional core: side effects pushed to the
   boundaries, referentially transparent functions everywhere else.
@@ -46,8 +48,12 @@ will enforce on others. Requirements:
 
 ### Toolchain
 
-- `rust-toolchain.toml` pins the latest stable release, **1.100.0**. Edition **2024**,
-  `rust-version = "1.100"`.
+- `mise.toml` is the single source of tool versions: Rust (latest stable, **1.100.0**,
+  profile `minimal` with `clippy` and `rustfmt`), `cargo-deny`, and `cargo-llvm-cov`.
+  `mise install` installs them all; locally and in CI (`jdx/mise-action`).
+- No `rust-toolchain.toml`: mise exports `RUSTUP_TOOLCHAIN`, which rustup ranks above
+  that file, so a second version source drifts silently.
+- Edition **2024**, `rust-version = "1.100"`.
 - Bump rule: adopt a new stable or point release when it ships; keep rustup on its
   default self-update.
 - Branch coverage needs nightly, so one dated nightly is pinned for coverage only
@@ -71,7 +77,7 @@ days. It does not apply to the official Rust toolchain, which carries its own so
 
 Exempt: stable and point releases of `rustc`, `cargo`, `clippy`, and `rustfmt`, plus
 rustup itself. Not exempt, because they skip that soak: nightlies (pinned by date
-instead), crates, cargo-installed tools, and GitHub Actions.
+instead), crates, dev tools (`cargo-deny`, `cargo-llvm-cov`), and GitHub Actions.
 
 How the grace period is enforced:
 
@@ -81,8 +87,7 @@ How the grace period is enforced:
   `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>`.
 - Dependabot: `cooldown: default-days: 3` for both `cargo` and `github-actions`.
 - CI actions: pinned by full commit SHA to a release at least 3 days old.
-- Cargo-installed tools (`cargo-llvm-cov`, `cargo-deny`): exact versions in
-  `xtask/src/plan.rs` and the CI workflow, chosen at least 3 days old.
+- Dev tools: exact versions in `mise.toml`, chosen at least 3 days old.
 
 ### Idiomatic Rust first
 
@@ -192,11 +197,13 @@ patterns.
 | `cargo test`                 | Runs every unit, property, integration, and doc test on stable              |
 | `cargo xtask cov`            | Branch coverage on the pinned nightly, reports, and the 90% gate             |
 | `cargo xtask check`          | fmt → clippy → test → doc → cargo-deny → coverage gate; stops at first fail |
-| `cargo xtask setup`          | Installs the coverage nightly, cargo-llvm-cov, and cargo-deny               |
+| `mise install`               | Installs Rust, cargo-deny, and cargo-llvm-cov from `mise.toml`              |
+| `cargo xtask setup`          | Installs the coverage nightly (the only toolchain outside `mise.toml`)      |
 | `cargo xtask install-hooks`  | Points git at `.githooks/` (pre-commit runs `cargo xtask check`)             |
 
 - The pre-commit hook also rejects staged diffs that add an email address.
-- CI (`.github/workflows/ci.yml`) runs the same `cargo xtask check` with
+- CI (`.github/workflows/ci.yml`) installs `mise.toml` with `jdx/mise-action`, then runs
+  the same `cargo xtask check` with
   `permissions: contents: read` and SHA-pinned actions.
 
 ### Editor: VS Code (November 2026)
@@ -231,7 +238,12 @@ lints, no sum types for unrepresentable states, and no compile-time effect bound
 
 **NO monorepo tooling (Nx, moon, Bazel, Turborepo) or a task-runner binary (just,
 Make)**: We reject because a Cargo workspace plus `xtask` covers builds, tasks, and
-dependency sharing with zero extra installs.
+dependency sharing; mise, already present for versions, is the only tool to install.
+
+**NO `rust-toolchain.toml` or `cargo install` for tool versions**: We reject because
+every version belongs in `mise.toml`; a second source is overridden by mise's
+`RUSTUP_TOOLCHAIN` and drifts, and `cargo install` compiles from source and duplicates
+the versions in CI.
 
 **NO hook runner (prek, lefthook, pre-commit)**: We reject for now because one shell hook
 calling `cargo xtask check` needs no install. Revisit when non-Rust gates join.
@@ -262,6 +274,8 @@ adding a review step.
 - The strict lint set occasionally conflicts with itself (`redundant_pub_crate` vs.
   `unreachable_pub`) or needs scoped `expect`s, such as `arithmetic_side_effects` in
   tests.
+- Contributors need mise installed; plain rustup alone does not pick the pinned
+  version.
 - The toolchain exemption trusts the Rust project's release process; a compromise of
   that pipeline is outside what a cooldown can catch.
 
@@ -272,6 +286,11 @@ newest stable at least 3 days old (1.99.1, holding back 1.100.0), and rustup
 self-updates were disabled in `cargo xtask setup`. Dropped because official toolchains
 already ship through beta and pre-release testing (see "Grace period: third-party code
 only"); it also delayed the native Cargo cooldown, which needs 1.100.
+
+**Toolchain in `rust-toolchain.toml`, tools via `cargo install`** (2026-11-13, same
+day): versions lived in `rust-toolchain.toml`, a gitignored `mise.local.toml`, and
+`xtask`/CI constants. Dropped because mise's `RUSTUP_TOOLCHAIN` overrode the file and a
+shell kept a stale toolchain; `mise.toml` now holds every version.
 
 ## References
 
@@ -292,5 +311,7 @@ only"); it also delayed the native Cargo cooldown, which needs 1.100.
 - [Clippy lint list](https://rust-lang.github.io/rust-clippy/master/index.html)
 - [cargo-deny](https://github.com/EmbarkStudios/cargo-deny)
 - [Dependabot `cooldown` option](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown-)
+- [mise — Rust](https://mise.jdx.dev/lang/rust.html) — tool options, `RUSTUP_TOOLCHAIN`
+  precedence over `rust-toolchain.toml`.
 - [matklad — cargo xtask](https://github.com/matklad/cargo-xtask)
 - ADR 1: `2026-11-13-adr1-main-intent.md` — product intent.

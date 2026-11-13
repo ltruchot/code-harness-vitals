@@ -6,8 +6,8 @@ Cargo cooldown (`global-min-publish-age = "3 days"`) on. Official toolchains are
 from the grace period (ADR 3, "Grace period: third-party code only").
 `cargo xtask check` passes: fmt, clippy `-D warnings`, 33 tests, docs, cargo-deny,
 100% branch coverage (gate 90%).
-Local env note: the mise shims ignore `rust-toolchain.toml`; a gitignored
-`mise.local.toml` pins `rust = "1.100.0"`. Update it when the toolchain moves.
+Every tool version lives in `mise.toml` (Rust, cargo-deny, cargo-llvm-cov); CI installs
+it with `jdx/mise-action`. Only the coverage nightly comes from `cargo xtask setup`.
 Not verified: whether `/context all` in a fresh session lists AGENTS.md under Memory files.
 
 ## Later

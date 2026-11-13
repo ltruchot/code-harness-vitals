@@ -7,10 +7,6 @@ pub(crate) const NIGHTLY: &str = "nightly-2026-11-09";
 /// Minimum branch coverage, in percent, for the coverage gate.
 pub(crate) const MIN_BRANCH_COVERAGE: f64 = 90.0;
 
-/// Tool versions installed by `cargo xtask setup`. CI pins the same versions.
-const CARGO_LLVM_COV: &str = "cargo-llvm-cov@0.9.1";
-const CARGO_DENY: &str = "cargo-deny@0.20.2";
-
 /// A task the user can run as `cargo xtask <task>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Task {
@@ -18,11 +14,8 @@ pub(crate) enum Task {
     Check,
     /// Branch coverage with reports (`lcov.info`, `coverage/html`) and the gate.
     Coverage,
-    /// Install the coverage nightly, and the cargo tools unless `toolchain_only`.
-    Setup {
-        /// Skip `cargo install` (CI installs prebuilt binaries instead).
-        toolchain_only: bool,
-    },
+    /// Install the coverage nightly. Every other tool comes from `mise.toml`.
+    Setup,
     /// Point git at the versioned hooks in `.githooks/`.
     InstallHooks,
 }
@@ -89,7 +82,7 @@ pub(crate) fn steps(task: Task) -> Vec<Step> {
     match task {
         Task::Check => [static_gates(), coverage()].concat(),
         Task::Coverage => coverage(),
-        Task::Setup { toolchain_only } => setup(toolchain_only),
+        Task::Setup => vec![nightly_toolchain()],
         Task::InstallHooks => vec![Step::new("git", &["config", "core.hooksPath", ".githooks"])],
     }
 }
@@ -146,8 +139,8 @@ fn coverage() -> Vec<Step> {
     ]
 }
 
-fn setup(toolchain_only: bool) -> Vec<Step> {
-    let toolchain = Step::new(
+fn nightly_toolchain() -> Step {
+    Step::new(
         "rustup",
         &[
             "toolchain",
@@ -158,14 +151,7 @@ fn setup(toolchain_only: bool) -> Vec<Step> {
             "--component",
             "llvm-tools-preview",
         ],
-    );
-    let tools =
-        [CARGO_LLVM_COV, CARGO_DENY].map(|tool| Step::cargo(&["install", "--locked", tool]));
-    if toolchain_only {
-        vec![toolchain]
-    } else {
-        core::iter::once(toolchain).chain(tools).collect()
-    }
+    )
 }
 
 #[cfg(test)]
@@ -220,19 +206,11 @@ mod tests {
     }
 
     #[test]
-    fn setup_installs_tools_unless_toolchain_only() {
-        assert_eq!(
-            steps(Task::Setup {
-                toolchain_only: false
-            })
-            .len(),
-            3
-        );
-        let only = steps(Task::Setup {
-            toolchain_only: true,
-        });
-        assert_eq!(only.len(), 1);
-        assert_eq!(only[0].program, "rustup");
+    fn setup_installs_only_the_coverage_nightly() {
+        let setup = steps(Task::Setup);
+        assert_eq!(setup.len(), 1);
+        assert_eq!(setup[0].program, "rustup");
+        assert!(setup[0].args.contains(&NIGHTLY.to_owned()));
     }
 
     #[test]
