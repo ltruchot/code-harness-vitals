@@ -4,7 +4,8 @@
 that Claude Code and OpenCode work inside — instructions, skills, memory, context budget,
 deterministic gates, and agent-config security — and scores it, deterministically.
 
-> **Status: pre-alpha.** Design documents only; no code yet. See the
+> **Status: pre-alpha.** Design documents and a Rust workspace whose gates are proven on a
+> placeholder app; no audit checks yet. See the
 > [intent ADR](docs/architecture_decision_records/2026-11-13-adr1-main-intent.md).
 
 ## What it checks
@@ -21,6 +22,19 @@ deterministic gates, and agent-config security — and scores it, deterministica
 Design principles: deterministic scores (no LLM in the score), Claude Code and OpenCode
 parity, repository and user-scope findings reported separately, Scorecard-style weighting
 with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
+
+## Develop
+
+Rust workspace, pinned toolchain (`rust-toolchain.toml`), details in
+[ADR 3](docs/architecture_decision_records/2026-11-13-adr3-rust-stack.md).
+
+```sh
+cargo xtask setup          # once: coverage nightly, cargo-llvm-cov, cargo-deny
+cargo xtask install-hooks  # once: pre-commit runs every gate
+cargo dummy                # count files, lines, and chars in the current directory
+cargo test                 # run the tests
+cargo xtask check          # every gate: fmt, clippy, tests, docs, cargo-deny, 90% branch coverage
+```
 
 ## Related projects
 
@@ -50,6 +64,7 @@ agent configuration files.
 
 - [ADR 1 — Main intent](docs/architecture_decision_records/2026-11-13-adr1-main-intent.md)
 - [ADR 2 — Competitors and pillar references](docs/architecture_decision_records/2026-11-13-adr2-competitors.md)
+- [ADR 3 — Rust stack](docs/architecture_decision_records/2026-11-13-adr3-rust-stack.md)
 
 ## License
 

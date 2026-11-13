@@ -1,0 +1,12 @@
+#!/bin/sh
+# Deterministic gates before every commit. Enable once per clone: cargo xtask install-hooks
+set -eu
+
+# AGENTS.md forbids personal data in repository content: reject staged email addresses.
+if git diff --cached --no-color -U0 | grep -E '^\+[^+]' |
+    grep -Eiq '[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}'; then
+    echo "pre-commit: the staged diff adds an email address; remove it (see AGENTS.md)." >&2
+    exit 1
+fi
+
+exec cargo xtask check

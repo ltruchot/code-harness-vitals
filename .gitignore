@@ -5,8 +5,18 @@ CLAUDE.local.md
 .env
 .env.*
 
-# Editors and OS
-.vscode/
+# Rust build output and coverage reports
+/target
+lcov.info
+/coverage
+
+# Local tool-manager overrides
+mise.local.toml
+
+# Editors and OS (shared VS Code settings are committed)
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
 .idea/
 *.swp
 .DS_Store

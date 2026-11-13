@@ -1,0 +1,5 @@
+# Newest stable release past the 3-day grace period. Bump rule: ADR 3.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

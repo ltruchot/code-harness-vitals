@@ -1,5 +1,8 @@
 # AGENTS.md
 
+> Session handoff: read `TODO.md` first — where the last session stopped, and what is left.
+> Open a `todo/` file only for the item you work on. An item done → delete its line and its `todo/` file.
+
 ## Project
 
 code-harness-vitals audits whether a repository is ready for agentic coding with
@@ -33,9 +36,25 @@ proposing features.
 
 ## Layout
 
+- Cargo workspace: products in `pkg/<name>/`, automation in `xtask/`. Lints, versions,
+  and package metadata are inherited from the root `Cargo.toml`.
+- `pkg/dummy/`: toolchain smoke test (counts files, lines, chars); not a product.
 - `README.md`: pitch, pillars, status, related projects.
 - `docs/architecture_decision_records/`: one ADR per decision,
   named `YYYY-MM-DD-adrN-kebab-slug.md`.
+
+## Rust (MANDATORY, details in ADR 3)
+
+- Idiomatic Rust 2024 per the Rust API Guidelines; functional style only through Rust
+  idioms (iterators, enums, `?`, traits), never patterns borrowed from other languages.
+- Side effects only in boundary modules, which open with
+  `#![expect(clippy::disallowed_methods, reason = "boundary: …")]`; everything else is pure.
+- Exemptions use `#[expect(lint, reason = "…")]`, scoped as narrowly as possible, never
+  `allow`. Do not relax `Cargo.toml` or `clippy.toml` to make a gate pass.
+- Test modules carry `#[cfg_attr(coverage_nightly, coverage(off))]`; integration test
+  files start with `#![cfg(test)]`.
+- New crate or version bump: meet the ADR 3 admission criteria, pin `=x.y.z` in
+  `[workspace.dependencies]`, and keep every `Cargo.lock` entry at least 3 days old.
 
 ## Architecture Decision Records
 
@@ -49,8 +68,15 @@ proposing features.
 - Competitor data in ADR 2 is a dated snapshot. Re-measure freshness (commits in the last
   14 days, latest release, issues closed/opened in 30 days) before citing a project
   anywhere new.
+- Measure it with `gh api graphql` (aliased `repository { history(since:) releases }`
+  plus `search(type: ISSUE) { issueCount }`), never a loop over REST `search/issues`:
+  that endpoint allows 30 requests/min and fails partway through a batch.
 
 ## Commands
 
-- No stack is chosen yet (open question in ADR 1), so there are no build, lint, or test
-  commands. Do not invent any; add them here when the first code lands.
+- `cargo dummy [PATH] [--all]`: run the dummy app (default: current directory).
+- `cargo test`: every unit, property, integration, and doc test on stable.
+- `cargo xtask check`: every gate (fmt, clippy `-D warnings`, test, doc, cargo-deny,
+  90% branch coverage). It must pass before every commit; the pre-commit hook runs it.
+- `cargo xtask cov`: branch coverage only; writes `lcov.info` and `coverage/html/`.
+- `cargo xtask setup`, then `cargo xtask install-hooks`: once per clone.

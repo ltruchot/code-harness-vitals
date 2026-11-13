@@ -1,0 +1,255 @@
+# Architecture Decision Record 3: Rust Stack — Strict, Idiomatic, Functional Core
+
+**Date**: 2026-11-13
+**Status**: Accepted
+**Context**: Resolves the "Stack" open question of ADR 1. Proven end to end on
+`pkg/dummy`, a file/line/char counter that exercises every gate.
+
+## Implementation Status
+
+| Component                                   | Status     | Location                              |
+| ------------------------------------------- | ---------- | ------------------------------------- |
+| Cargo workspace, pinned toolchains          | ✅ Done    | `Cargo.toml`, `rust-toolchain.toml`   |
+| Lint, format, complexity, effect policy     | ✅ Done    | `Cargo.toml`, `clippy.toml`, `rustfmt.toml` |
+| Supply-chain gate                           | ✅ Done    | `deny.toml`, `Cargo.lock`             |
+| 90% branch-coverage gate                    | ✅ Done    | `xtask/src/coverage.rs`               |
+| Task runner                                 | ✅ Done    | `xtask/`, `.cargo/config.toml`        |
+| Pre-commit hook, CI, Dependabot             | ✅ Done    | `.githooks/`, `.github/`              |
+| VS Code workspace settings                  | ✅ Done    | `.vscode/`                            |
+| Native Cargo cooldown (`min-publish-age`)   | ⏳ Planned | Toolchain bump, see Decision          |
+
+## Problem
+
+The auditor must ship as a dependable CI tool, so its own codebase has to meet the bar it
+will enforce on others. Requirements:
+
+- A monorepo with no special tooling: no Nx, moon, Bazel, or task-runner binaries.
+- Current Rust, with the strictest lint, format, and safety settings available.
+- Low complexity, idiomatic Rust, and a functional core: side effects pushed to the
+  boundaries, referentially transparent functions everywhere else.
+- At least 90% **branch** coverage, enforced, not reported.
+- Dependencies that are highly rated, safe, and current, with a **3-day grace period** on
+  every update download: crates, toolchains, CI actions.
+- One simple command to run the app and one to see its test results.
+
+## Decision
+
+### Workspace
+
+- A plain Cargo workspace: `members = ["pkg/*", "xtask"]`, `resolver = "3"`
+  (MSRV-aware), shared `[workspace.package]`, `[workspace.dependencies]`, and
+  `[workspace.lints]` inherited by every crate with `lints.workspace = true`.
+- Products live in `pkg/<name>/`. Automation lives in `xtask/` (the cargo-xtask pattern:
+  plain Rust, no extra binary). Aliases in `.cargo/config.toml`: `cargo dummy`,
+  `cargo xtask`.
+- `Cargo.lock` is committed; every gate runs with `--locked`.
+
+### Toolchain and the grace period
+
+- `rust-toolchain.toml` pins the newest stable release that is at least 3 days old:
+  **1.99.1**. Rust 1.100.0 (2026-11-12) is inside the grace period.
+- Edition **2024**, `rust-version = "1.99"`.
+- Branch coverage needs nightly, so one nightly is pinned for coverage only
+  (`nightly-2026-11-09`, constant `NIGHTLY` in `xtask/src/plan.rs`). Everything else runs
+  on stable.
+- Bump rule: move to a new stable once it is 3 days old. The first bump (1.100.x, on or
+  after 2026-11-15) also adds `[registry] global-min-publish-age = "3 days"` to
+  `.cargo/config.toml`, the native Cargo cooldown stabilized in 1.100. Cargo 1.99 warns
+  on that key at every invocation, so it is not committed before the bump.
+- Until then, the cooldown is checked by querying crates.io `created_at` for every
+  `Cargo.lock` entry before committing a lockfile change. Too-new crates are held back
+  with `cargo update -p <crate> --precise <older>`.
+- Dependabot uses `cooldown: default-days: 3` for both `cargo` and `github-actions`. CI
+  actions are pinned by full commit SHA to a release at least 3 days old.
+
+### Idiomatic Rust first
+
+The code reads as idiomatic Rust 2024 written by a seasoned Rustacean. The functional
+style is expressed through Rust's own idioms, never by importing another language's
+patterns.
+
+- References: the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/checklist.html),
+  the Rust Book, and *Effective Rust*.
+- Borrow by default (`&str`, `&Path`, `&[T]`); no gratuitous `clone` or `to_string`.
+- Errors: `?` and `let … else` for early returns. Use `Option`/`Result` combinators where
+  they read better than `match`. Error types come from `thiserror`: lowercase messages
+  without a trailing period, a `source()` chain, and `From` conversions.
+- Conversions through `From`, `TryFrom`, `FromStr`. User output through `Display`.
+  Derive the common traits (`Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`,
+  `Default`) where they make sense.
+- Types make invalid states unrepresentable: enums over flags, private fields behind
+  getters, `#[must_use]` on values and pure accessors.
+- Iterators, `fold`, `sum`, and pattern matching over index loops.
+- Naming per RFC 430: no `get_` prefix, and `as_`/`to_`/`into_` by cost.
+- Modules: no `mod.rs`, `pub(crate)` inside private modules. Doc comments carry
+  `# Errors` and `# Examples`, and doc tests run in `cargo test`.
+- Enforced by rustc `rust_2018_idioms` and `rust_2024_compatibility`; clippy `style`,
+  `pedantic`, and `nursery`; and rustfmt `style_edition = "2024"`. The API Guidelines
+  points no lint covers are checked in review.
+
+### Functional core, effects at the boundaries
+
+- Pure modules hold the logic. A function's output depends only on its inputs.
+- A local `mut` inside a function is allowed when it does not escape: referential
+  transparency is a property of the function boundary.
+- Side effects are confined to boundary modules, and this is enforced, not documented:
+  - `clippy.toml` `disallowed-methods` bans filesystem, environment, terminal, process,
+    clock, and directory-walk calls workspace-wide.
+  - A boundary module opts out with a file-level
+    `#![expect(clippy::disallowed_methods, reason = "boundary: …")]`.
+  - `allow_attributes` forces `expect` over `allow`, so a stale exemption fails the build.
+- `disallowed-types` bans `Cell`, `RefCell`, `Mutex`, and `RwLock`: state flows through
+  values, not shared cells.
+- Data types are values. In `pkg/dummy`, `Counts` is a monoid (`Default` identity,
+  associative saturating `Add`, `Sum`), so per-file results fold in any order or grouping.
+
+### Lint and complexity policy
+
+- `unsafe_code = "forbid"`.
+- Every lint is set to `warn` in `Cargo.toml`, so editors surface them all; the gates run
+  `clippy … -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc`.
+- Clippy groups `all`, `pedantic`, `nursery`, and `cargo`, plus restriction picks:
+  `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects`,
+  `as_conversions`, `print_stdout`, `print_stderr`, `exit`, `shadow_unrelated`,
+  `wildcard_enum_match_arm`, `mod_module_files`, and others listed in `Cargo.toml`.
+- `redundant_pub_crate` is allowed because it contradicts rustc `unreachable_pub`, which
+  wins.
+- Complexity budget (`clippy.toml`):
+  - cognitive complexity 7;
+  - nesting depth 3;
+  - 40 lines per function;
+  - 4 arguments;
+  - 1 boolean parameter.
+
+  Clippy has no cyclomatic-complexity lint; cognitive complexity is the closest
+  maintained proxy.
+- Tests may `unwrap`, `expect`, `panic`, index, and print (`allow-*-in-tests`).
+  Integration test crates start with `#![cfg(test)]` so these exemptions apply.
+
+### Tests and coverage
+
+- Unit tests sit next to the code. `proptest` checks algebraic laws: monoid identity,
+  associativity, and additivity across newline splits. `assert_cmd` drives the real
+  binary against `tempfile` trees.
+- Gate: at least **90% branch coverage** per run.
+  - `cargo-llvm-cov` 0.9.1 provides branch coverage on nightly only (`--branch`) and has
+    no `--fail-under-branches`.
+  - `xtask` reads `data[0].totals.branches` from the `--json --summary-only` export and
+    fails under 90%. A run with zero branches also fails, because it means
+    instrumentation was off.
+- Test modules carry `#[cfg_attr(coverage_nightly, coverage(off))]`, so the percentage
+  measures product code only. `xtask` is excluded from the gate as dev tooling; its pure
+  modules are unit-tested.
+- Reports: `lcov.info` for the editor gutters, plus `coverage/html/`.
+
+### Supply chain
+
+- `cargo-deny` (`deny.toml`):
+  - every advisory kind fails, including unmaintained and yanked crates;
+  - license allow-list: Apache-2.0, MIT, Unicode-3.0, Unlicense;
+  - wildcard versions are denied;
+  - crates.io is the only source.
+- Exact version requirements (`=x.y.z`) in `[workspace.dependencies]`.
+- Admission criteria for a new crate:
+  - millions of downloads, or a maintainer with an established record;
+  - a release within the last 12 months;
+  - an OSI license on the allow-list;
+  - `cargo deny` clean;
+  - the version is at least 3 days old.
+
+  The standard library is preferred when the gain is marginal.
+- Current set: `clap`, `ignore`, `thiserror`, and `serde_json` (xtask); for tests,
+  `assert_cmd`, `predicates`, `proptest`, and `tempfile`.
+
+### Commands and gates
+
+| Command                      | What it does                                                                 |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `cargo dummy [PATH] [--all]` | Runs the dummy app (default: current directory, project files only)          |
+| `cargo test`                 | Runs every unit, property, integration, and doc test on stable              |
+| `cargo xtask cov`            | Branch coverage on the pinned nightly, reports, and the 90% gate             |
+| `cargo xtask check`          | fmt → clippy → test → doc → cargo-deny → coverage gate; stops at first fail |
+| `cargo xtask setup`          | Installs the coverage nightly, cargo-llvm-cov, and cargo-deny               |
+| `cargo xtask install-hooks`  | Points git at `.githooks/` (pre-commit runs `cargo xtask check`)             |
+
+- The pre-commit hook also rejects staged diffs that add an email address.
+- CI (`.github/workflows/ci.yml`) runs the same `cargo xtask check` with
+  `permissions: contents: read` and SHA-pinned actions.
+
+### Editor: VS Code (November 2026)
+
+- Recommended extensions (`.vscode/extensions.json`):
+  - `rust-lang.rust-analyzer`
+  - `tamasfe.even-better-toml`
+  - `fill-labs.dependi`: crate versions and advisories inline; replaces the deprecated
+    `serayuzgur.crates`.
+  - `vadimcn.vscode-lldb`: debugger.
+  - `usernamehw.errorlens`
+  - `ryanluker.vscode-coverage-gutters`: reads `lcov.info`.
+
+  The legacy `rust-lang.rust` (RLS) is marked unwanted.
+- Settings (`.vscode/settings.json`):
+  - rust-analyzer runs clippy on all targets, so the editor shows exactly the gate's
+    lints;
+  - format on save (rustfmt via rust-analyzer, Taplo for TOML);
+  - imports grouped by module with `crate::` prefixes;
+  - final newline and trailing-whitespace trimming.
+- On Windows with WSL, open the folder through the Remote - WSL extension, so
+  rust-analyzer and cargo run inside Linux.
+
+## Alternatives Rejected
+
+**NO TypeScript CLI**: We reject because a static binary runs in any CI image without a
+runtime, and Rust's type system and lints enforce the purity and safety rules
+mechanically.
+
+**NO Go**: We reject because Go has no equivalent of clippy's pedantic and restriction
+lints, no sum types for unrepresentable states, and no compile-time effect boundary.
+
+**NO monorepo tooling (Nx, moon, Bazel, Turborepo) or a task-runner binary (just,
+Make)**: We reject because a Cargo workspace plus `xtask` covers builds, tasks, and
+dependency sharing with zero extra installs.
+
+**NO hook runner (prek, lefthook, pre-commit)**: We reject for now because one shell hook
+calling `cargo xtask check` needs no install. Revisit when non-Rust gates join.
+
+**NO cargo-tarpaulin**: We reject because it has no branch coverage.
+
+**NO `cargo-cooldown` wrapper**: We reject because it has too little adoption for a
+supply-chain control (about 5k downloads), and Cargo ships the feature natively in 1.100.
+
+**NO adopting Rust 1.100 on release day**: We reject because it breaks the 3-day grace
+period that applies to toolchains as much as to crates.
+
+## Trade-offs
+
+### Wins
+
+- Every rule in this ADR is checked by a machine: lints, the effect boundary, complexity,
+  coverage, licenses, advisories.
+- The editor, the hook, and CI run the same gate (`cargo xtask check`).
+- Pure cores are trivial to test; property tests cover the algebra, not only examples.
+
+### Costs
+
+- Coverage depends on a pinned nightly that must be bumped with the stable toolchain.
+- `xtask` is code to maintain; its tool versions are repeated in the CI workflow.
+- The strict lint set occasionally conflicts with itself (`redundant_pub_crate` vs.
+  `unreachable_pub`) or needs scoped `expect`s, such as `arithmetic_side_effects` in
+  tests.
+- Until the 1.100 bump, the crate cooldown is a manual pre-commit check, not a resolver
+  rule.
+
+## References
+
+- [Rust API Guidelines checklist](https://rust-lang.github.io/api-guidelines/checklist.html)
+- [Rust 1.100.0 release notes](https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/)
+  — `registry.global-min-publish-age`, `[lints.cargo]`.
+- [Cargo issue #15973 — minimum age for dependencies](https://github.com/rust-lang/cargo/issues/15973)
+- [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) — branch coverage
+  (nightly), report formats.
+- [Clippy lint list](https://rust-lang.github.io/rust-clippy/master/index.html)
+- [cargo-deny](https://github.com/EmbarkStudios/cargo-deny)
+- [Dependabot `cooldown` option](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#cooldown-)
+- [matklad — cargo xtask](https://github.com/matklad/cargo-xtask)
+- ADR 1: `2026-11-13-adr1-main-intent.md` — product intent.

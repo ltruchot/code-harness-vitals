@@ -2,7 +2,7 @@
 
 **Date**: 2026-11-13
 **Status**: Accepted (living document — the product compass)
-**Context**: Greenfield project. No code, no stack chosen. Competitive landscape in ADR 2.
+**Context**: Greenfield project. Competitive landscape in ADR 2; stack in ADR 3.
 
 ## Implementation Status
 
@@ -11,7 +11,8 @@
 | Agent instructions (US English, no PII) | ✅ Done    | `AGENTS.md`                             |
 | Intent (this ADR)                       | ✅ Done    | `docs/architecture_decision_records/`   |
 | Competitor analysis                     | ✅ Done    | `2026-11-13-adr2-competitors.md`        |
-| Stack choice                            | ⏳ Planned | Open question below                     |
+| Stack choice (Rust, Cargo workspace)    | ✅ Done    | `2026-11-13-adr3-rust-stack.md`         |
+| Toolchain and gates on a dummy app      | ✅ Done    | `pkg/dummy/`, `xtask/`                  |
 | Check engine and pillar checks          | ⏳ Planned | -                                       |
 | CLI, JSON/SARIF output, CI action       | ⏳ Planned | -                                       |
 
@@ -127,8 +128,7 @@ the evidence path and a concrete fix.
 
 ## Open Questions
 
-- **Stack**: a single static binary (Go or Rust) favors zero-dependency CI use; a
-  TypeScript CLI favors `npx` distribution and reuse of the agent ecosystem's tooling.
+- **Stack**: resolved — Rust, as a Cargo workspace (ADR 3).
 - **Distribution**: npm, Homebrew, GitHub Action, Claude Code plugin, OpenCode plugin.
 - **User surface**: terminal report only, or also a TUI, a local web report, or an
   editor extension.
