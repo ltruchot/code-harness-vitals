@@ -53,8 +53,9 @@ proposing features.
   `allow`. Do not relax `Cargo.toml` or `clippy.toml` to make a gate pass.
 - Test modules carry `#[cfg_attr(coverage_nightly, coverage(off))]`; integration test
   files start with `#![cfg(test)]`.
-- New crate or version bump: meet the ADR 3 admission criteria, pin `=x.y.z` in
-  `[workspace.dependencies]`, and keep every `Cargo.lock` entry at least 3 days old.
+- New crate or version bump: meet the ADR 3 admission criteria and pin `=x.y.z` in
+  `[workspace.dependencies]`. Never weaken the 3-day Cargo cooldown in
+  `.cargo/config.toml`; official stable toolchains are exempt, nightlies stay date-pinned.
 
 ## Architecture Decision Records
 

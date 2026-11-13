@@ -1,7 +1,7 @@
 //! Pure task planning: which commands each task runs, in order. Nothing here spawns a process.
 
 /// Nightly toolchain used only for branch coverage (`--branch` is nightly-only).
-/// Pinned to a build at least 3 days old; bump together with `rust-toolchain.toml`.
+/// Pinned to a dated build: nightlies skip the beta and pre-release soak (ADR 3).
 pub(crate) const NIGHTLY: &str = "nightly-2026-11-09";
 
 /// Minimum branch coverage, in percent, for the coverage gate.
@@ -152,7 +152,6 @@ fn setup(toolchain_only: bool) -> Vec<Step> {
         &[
             "toolchain",
             "install",
-            "--no-self-update",
             NIGHTLY,
             "--profile",
             "minimal",

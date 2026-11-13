@@ -16,7 +16,7 @@
 | Task runner                                 | ✅ Done    | `xtask/`, `.cargo/config.toml`        |
 | Pre-commit hook, CI, Dependabot             | ✅ Done    | `.githooks/`, `.github/`              |
 | VS Code workspace settings                  | ✅ Done    | `.vscode/`                            |
-| Native Cargo cooldown (`min-publish-age`)   | ⏳ Planned | Toolchain bump, see Decision          |
+| Native Cargo cooldown (`min-publish-age`)   | ✅ Done    | `.cargo/config.toml`                  |
 
 ## Problem
 
@@ -29,7 +29,7 @@ will enforce on others. Requirements:
   boundaries, referentially transparent functions everywhere else.
 - At least 90% **branch** coverage, enforced, not reported.
 - Dependencies that are highly rated, safe, and current, with a **3-day grace period** on
-  every update download: crates, toolchains, CI actions.
+  every update download.
 - One simple command to run the app and one to see its test results.
 
 ## Decision
@@ -44,23 +44,45 @@ will enforce on others. Requirements:
   `cargo xtask`.
 - `Cargo.lock` is committed; every gate runs with `--locked`.
 
-### Toolchain and the grace period
+### Toolchain
 
-- `rust-toolchain.toml` pins the newest stable release that is at least 3 days old:
-  **1.99.1**. Rust 1.100.0 (2026-11-12) is inside the grace period.
-- Edition **2024**, `rust-version = "1.99"`.
-- Branch coverage needs nightly, so one nightly is pinned for coverage only
+- `rust-toolchain.toml` pins the latest stable release, **1.100.0**. Edition **2024**,
+  `rust-version = "1.100"`.
+- Bump rule: adopt a new stable or point release when it ships; keep rustup on its
+  default self-update.
+- Branch coverage needs nightly, so one dated nightly is pinned for coverage only
   (`nightly-2026-11-09`, constant `NIGHTLY` in `xtask/src/plan.rs`). Everything else runs
-  on stable.
-- Bump rule: move to a new stable once it is 3 days old. The first bump (1.100.x, on or
-  after 2026-11-15) also adds `[registry] global-min-publish-age = "3 days"` to
-  `.cargo/config.toml`, the native Cargo cooldown stabilized in 1.100. Cargo 1.99 warns
-  on that key at every invocation, so it is not committed before the bump.
-- Until then, the cooldown is checked by querying crates.io `created_at` for every
-  `Cargo.lock` entry before committing a lockfile change. Too-new crates are held back
-  with `cargo update -p <crate> --precise <older>`.
-- Dependabot uses `cooldown: default-days: 3` for both `cargo` and `github-actions`. CI
-  actions are pinned by full commit SHA to a release at least 3 days old.
+  on stable. Bump it together with the stable toolchain.
+
+### Grace period: third-party code only
+
+The 3-day grace period applies to code published on open registries, where a
+compromised account or token can ship a malicious version that scanners catch within
+days. It does not apply to the official Rust toolchain, which carries its own soak:
+
+- A stable `rustc`/`cargo` spends a six-week cycle on the beta channel, tested by crater
+  across the ecosystem. Its final artifacts are then published to `dev-static` about three
+  days before release, with a public pre-release testing call. Point releases go through
+  the same pre-release step.
+- Each rustup release is published to a beta self-update channel (`dev-static`) with a
+  public call for testing before promotion to stable.
+- Both are built and signed by the Rust project on its own infrastructure, not uploaded
+  to an open registry.
+
+Exempt: stable and point releases of `rustc`, `cargo`, `clippy`, and `rustfmt`, plus
+rustup itself. Not exempt, because they skip that soak: nightlies (pinned by date
+instead), crates, cargo-installed tools, and GitHub Actions.
+
+How the grace period is enforced:
+
+- Crates: `[registry] global-min-publish-age = "3 days"` in `.cargo/config.toml`, the
+  native Cargo cooldown (stable since 1.100). Every resolution skips versions published
+  in the last 3 days. For an urgent fix, override a single update with
+  `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>`.
+- Dependabot: `cooldown: default-days: 3` for both `cargo` and `github-actions`.
+- CI actions: pinned by full commit SHA to a release at least 3 days old.
+- Cargo-installed tools (`cargo-llvm-cov`, `cargo-deny`): exact versions in
+  `xtask/src/plan.rs` and the CI workflow, chosen at least 3 days old.
 
 ### Idiomatic Rust first
 
@@ -108,6 +130,7 @@ patterns.
 - `unsafe_code = "forbid"`.
 - Every lint is set to `warn` in `Cargo.toml`, so editors surface them all; the gates run
   `clippy … -- -D warnings` and `RUSTDOCFLAGS="-D warnings" cargo doc`.
+- Cargo lints: `unused_dependencies`.
 - Clippy groups `all`, `pedantic`, `nursery`, and `cargo`, plus restriction picks:
   `unwrap_used`, `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects`,
   `as_conversions`, `print_stdout`, `print_stderr`, `exit`, `shadow_unrelated`,
@@ -218,8 +241,10 @@ calling `cargo xtask check` needs no install. Revisit when non-Rust gates join.
 **NO `cargo-cooldown` wrapper**: We reject because it has too little adoption for a
 supply-chain control (about 5k downloads), and Cargo ships the feature natively in 1.100.
 
-**NO adopting Rust 1.100 on release day**: We reject because it breaks the 3-day grace
-period that applies to toolchains as much as to crates.
+**NO grace period on official toolchains**: We reject because stable Rust and rustup
+already soak through beta channels and a public pre-release on `dev-static`. A second
+delay postpones point releases, which are usually regression or security fixes, without
+adding a review step.
 
 ## Trade-offs
 
@@ -237,8 +262,16 @@ period that applies to toolchains as much as to crates.
 - The strict lint set occasionally conflicts with itself (`redundant_pub_crate` vs.
   `unreachable_pub`) or needs scoped `expect`s, such as `arithmetic_side_effects` in
   tests.
-- Until the 1.100 bump, the crate cooldown is a manual pre-commit check, not a resolver
-  rule.
+- The toolchain exemption trusts the Rust project's release process; a compromise of
+  that pipeline is outside what a cooldown can catch.
+
+## Supersedes
+
+**Grace period on toolchains** (2026-11-13, same day): the toolchain was pinned to the
+newest stable at least 3 days old (1.99.1, holding back 1.100.0), and rustup
+self-updates were disabled in `cargo xtask setup`. Dropped because official toolchains
+already ship through beta and pre-release testing (see "Grace period: third-party code
+only"); it also delayed the native Cargo cooldown, which needs 1.100.
 
 ## References
 
@@ -246,6 +279,14 @@ period that applies to toolchains as much as to crates.
 - [Rust 1.100.0 release notes](https://blog.rust-lang.org/2026/11/12/Rust-1.100.0/)
   — `registry.global-min-publish-age`, `[lints.cargo]`.
 - [Cargo issue #15973 — minimum age for dependencies](https://github.com/rust-lang/cargo/issues/15973)
+- [Rust Forge — release process](https://forge.rust-lang.org/release/process.html)
+  — stable promotion and the `dev-static` pre-release.
+- [Rust 1.98.0 pre-release testing](https://blog.rust-lang.org/inside-rust/2026/08/19/1.98.0-prerelease/)
+  — example of the public pre-release call.
+- [rustup release process](https://rust-lang.github.io/rustup/dev-guide/release-process.html)
+  — beta self-update channel before stable.
+- [Package managers need to cool down](https://nesbitt.io/2026/03/04/package-managers-need-to-cool-down.html)
+  — the threat model cooldowns address.
 - [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) — branch coverage
   (nightly), report formats.
 - [Clippy lint list](https://rust-lang.github.io/rust-clippy/master/index.html)
