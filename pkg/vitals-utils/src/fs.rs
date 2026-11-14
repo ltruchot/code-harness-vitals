@@ -44,15 +44,23 @@ pub fn read_optional(path: &Path) -> Result<Option<String>, Error> {
 }
 
 /// Whether anything is at `path`: a file, a directory, or a symbolic link whose target
-/// exists. A dangling link counts as nothing.
+/// exists. A dangling link, and a path through a regular file (`file.md/SKILL.md`), count
+/// as nothing.
 ///
 /// # Errors
 ///
-/// [`Error::Read`] when `path` cannot be inspected.
+/// [`Error::Read`] when `path` cannot be inspected (for example, permission denied).
 pub fn exists(path: &Path) -> Result<bool, Error> {
     match std::fs::metadata(path) {
         Ok(_) => Ok(true),
-        Err(source) if source.kind() == ErrorKind::NotFound => Ok(false),
+        Err(source)
+            if matches!(
+                source.kind(),
+                ErrorKind::NotFound | ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
         Err(source) => Err(read_error(path, source)),
     }
 }
@@ -294,10 +302,7 @@ mod tests {
         assert!(exists(&file).unwrap());
         assert!(exists(dir.path()).unwrap());
         assert!(!exists(&dir.path().join("missing")).unwrap());
-        assert!(matches!(
-            exists(&file.join("child")),
-            Err(Error::Read { .. })
-        ));
+        assert!(!exists(&file.join("SKILL.md")).unwrap());
     }
 
     #[test]

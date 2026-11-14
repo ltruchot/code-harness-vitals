@@ -113,28 +113,36 @@ fn static_gates() -> Vec<Step> {
     ]
 }
 
+/// Gate binaries with container end-to-end tests (`tests/container.rs`).
+pub(crate) const CONTAINER_GATES: [&str; 2] = ["agents-md-chkr", "skills-chkr"];
+
 fn e2e() -> Vec<Step> {
-    vec![
-        Step::cargo(&[
-            "build",
-            "--release",
-            "--locked",
-            "--target",
-            STATIC_TARGET,
-            "-p",
-            "agents-md-chkr",
-        ]),
-        Step::cargo(&[
-            "test",
-            "--locked",
-            "-p",
-            "agents-md-chkr",
-            "--test",
-            "container",
-            "--",
-            "--ignored",
-        ]),
-    ]
+    CONTAINER_GATES
+        .iter()
+        .flat_map(|gate| {
+            [
+                Step::cargo(&[
+                    "build",
+                    "--release",
+                    "--locked",
+                    "--target",
+                    STATIC_TARGET,
+                    "-p",
+                    gate,
+                ]),
+                Step::cargo(&[
+                    "test",
+                    "--locked",
+                    "-p",
+                    gate,
+                    "--test",
+                    "container",
+                    "--",
+                    "--ignored",
+                ]),
+            ]
+        })
+        .collect()
 }
 
 fn coverage() -> Vec<Step> {
@@ -187,7 +195,7 @@ fn nightly_toolchain() -> Step {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expect, NIGHTLY, STATIC_TARGET, Step, Task, steps};
+    use super::{CONTAINER_GATES, Expect, NIGHTLY, STATIC_TARGET, Step, Task, steps};
 
     fn command_lines(task: Task) -> Vec<String> {
         steps(task)
@@ -205,15 +213,18 @@ mod tests {
         );
         assert!(lines.iter().any(|line| line.ends_with("-- -D warnings")));
         assert!(lines.iter().any(|line| line == "cargo deny check"));
-        assert_eq!(lines.len(), 13);
+        assert_eq!(lines.len(), 15);
     }
 
     #[test]
-    fn e2e_builds_the_static_binary_then_runs_the_ignored_container_tests() {
+    fn e2e_builds_each_static_binary_then_runs_its_ignored_container_tests() {
         let lines = command_lines(Task::E2e);
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains(&format!("--target {STATIC_TARGET}")));
-        assert!(lines[1].ends_with("--test container -- --ignored"));
+        assert_eq!(lines.len(), 2 * CONTAINER_GATES.len());
+        for (pair, gate) in lines.chunks(2).zip(CONTAINER_GATES) {
+            assert!(pair[0].contains(&format!("--target {STATIC_TARGET}")));
+            assert!(pair[0].ends_with(&format!("-p {gate}")));
+            assert!(pair[1].ends_with(&format!("-p {gate} --test container -- --ignored")));
+        }
         let check = command_lines(Task::Check);
         let deny = check
             .iter()
