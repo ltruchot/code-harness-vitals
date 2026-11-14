@@ -14,7 +14,9 @@ the ADR 3 stack. The first gate, `agents-md`, proves the model.
 | `agents-md` gate: probes                    | ✅ Done    | `apps/agents-md-chkr/`                     |
 | `agents-md` gate: review skill              | ✅ Done    | `apps/agents-md-chkr/skills/agents-md-review/` |
 | `agents-md` gate: cascade probes            | ✅ Done    | `apps/agents-md-chkr/src/{cascade,nested,ancestors}.rs` |
-| Container end-to-end tests                  | ✅ Done    | `apps/agents-md-chkr/tests/container.rs`   |
+| Container end-to-end tests                  | ✅ Done    | `apps/*-chkr/tests/container.rs`           |
+| `skills` gate: probes                       | ✅ Done    | `apps/skills-chkr/`                        |
+| `skills` gate: review skill                 | ✅ Done    | `apps/skills-chkr/skills/skills-review/`   |
 | Other gates (catalog below)                 | ⏳ Planned | -                                          |
 
 ## Problem
@@ -82,7 +84,7 @@ in Claude Code and OpenCode, which read the same `SKILL.md`.
 | Gate | Pillar | Probes (deterministic) | Review (agent, advisory) | Status |
 | --- | --- | --- | --- | --- |
 | `agents-md` | 1. Instruction files | `AM01`–`AM15`, below | `agents-md-review`: 18-criterion rubric | ✅ |
-| `skills` | 2. Skills | `SKILL.md` frontmatter, description length, body budget, referenced files exist | description triggerability, overlap between skills, unsafe script patterns | ⏳ |
+| `skills` | 2. Skills | `SK01`–`SK15`, below | `skills-review`: 12-criterion rubric | ✅ |
 | `codebase-memory` | 3. Codebase memory | a code-intelligence MCP server or plugin is wired in for both agents | - | ⏳ |
 | `context-limiting` | 4. Context limiting | an output-capping tool or hook is wired in for both agents | - | ⏳ |
 | `commit-gates` | 5. Deterministic gates | an active hook runner whose hooks call lint, format, type check, tests, vulnerability and secret scans; CI runs the same list | whether the gate list fits the stack | ⏳ |
@@ -144,6 +146,143 @@ started in a subdirectory instead of the root, the Claude Code **Project instruc
 setting (`claude-md-and-agents-md` loads both families) and `claudeMdExcludes`, which live
 in user settings, and JSON/SARIF output.
 
+### The `skills` gate
+
+A skill is a directory holding a `SKILL.md`: YAML frontmatter, then Markdown. Both agents
+list each skill's description to the model and load the body when a task matches it. They
+look in different places, read different fields, and react differently to the same
+mistake, so a skill can work in one agent and be invisible or silent in the other.
+
+| Where | Claude Code | OpenCode 2 |
+| --- | --- | --- |
+| Project roots | `.claude/skills/<name>/SKILL.md` only; never `.agents/` or `.opencode/` | `.claude/skills/`, `.agents/skills/`, `.opencode/skills/`, `.opencode/skill/` |
+| Parent directories | the start directory and every parent **up to the repository root** | every directory from the working directory **up to `/`** |
+| Subdirectories | `<subdir>/.claude/skills/` loads the first time Claude reads or edits a file there | never: the walk only goes up, and the read tool discovers only `AGENTS.md` |
+| Personal | `~/.claude/skills/` | `~/.claude/skills/`, `~/.agents/skills/`, the global config directory's `skill(s)/` |
+| Layout | `<name>/SKILL.md`; the folder may be a symbolic link | a directory holding `SKILL.md` (exact name), up to six levels deep, and any `*.md` file directly in a skill root |
+| Identity | frontmatter `name`, else the directory name; the directory name also invokes it | the directory name; `name` is only displayed |
+| Same name | enterprise over personal over project: `~/.claude/skills/x` beats `.claude/skills/x` | the later source wins: project `.claude/skills/x` beats `~/.claude/skills/x`, and `.agents/skills/x` beats `.claude/skills/x` |
+| Frontmatter | read only when `---` is the first line; YAML that does not parse loads the skill with **no fields** | gray-matter; a failed parse is retried with plain values containing `:` rewritten as block scalars, then the skill is skipped |
+| Fields | `name`, `description`, `when_to_use`, and a dozen Claude Code extensions; unknown fields are ignored | `name`, `description`, `metadata`, `disable-model-invocation`; a non-string `name` or `description` skips the skill |
+| No description | falls back to the first non-empty body line | the skill is never listed to the model |
+| Size | `description` + `when_to_use` truncated at 1,536 chars in the listing; "keep `SKILL.md` under 500 lines"; compaction keeps the first 5,000 tokens | no limit found |
+
+#### Sourced facts
+
+Read on 2026-11-14: `https://code.claude.com/docs/en/skills.md`, the
+[Agent Skills spec](https://agentskills.io/specification), and OpenCode V2 at
+`d759c548aa`, files under `packages/core/src`. A fact marked **no** feeds the review or
+"Not probed yet", never a probe.
+
+Claude Code:
+
+| # | Fact | Source | Confirmed |
+|---|---|---|---|
+| C1 | Project skills load from `.claude/skills/<skill-name>/SKILL.md`; the other locations are enterprise (managed settings dir), personal `~/.claude/skills/`, nested `<subdir>/.claude/skills/`, `--add-dir`, plugins, claude.ai | skills.md, "Choose where skills load" (table) | yes |
+| C2 | Claude Code never reads `.agents/skills/` or `.opencode/`: no page of the docs names them | skills.md table; `grep '.agents/skills'` over llms-full.txt (10 MB): 0 hits; Claude Code 2.1.325 `claude -p` init event, on a repository with a skill in each of `.claude/skills/` and `.agents/skills/`, lists only the first | yes (documented and run) |
+| C3 | Project skills load from `.claude/skills/` in the start directory and every parent **up to the repository root**, not above it | skills.md, "Load skills in monorepos and subdirectories" | yes |
+| C4 | `.claude/skills/` below the start directory load the first time Claude reads or edits a file there | same section | yes |
+| C5 | Same name: enterprise over personal over project ("`/deploy` runs the personal one") | skills.md, "Resolve skills that share a name" | yes |
+| C6 | A `<skill-name>` entry can be a symlink to a directory; `SKILL.md` is read from the target | skills.md, "Symlinked folders" | yes |
+| C7 | A folder named `synced` (any case) or `anthropic-skills` / `anthropic-skills:*` does not load outside a plugin | skills.md, "Reserved name" bullets | yes |
+| C8 | Frontmatter is read only when the opening `---` is the first line; otherwise the whole file is content | skills.md, "Frontmatter reference" | yes |
+| C9 | YAML that does not parse: the skill loads with no fields set, so Claude cannot match its `description` | "Frontmatter reference"; "Skill not triggering" | yes |
+| C10 | `description` is optional; without it Claude Code uses the first non-empty body line | "Frontmatter reference", `description` row | yes |
+| C11 | `description` + `when_to_use` are truncated at 1,536 chars in the skill listing (configurable: `skillListingMaxDescChars`) | `description` row; "Skill descriptions are cut short" | yes |
+| C12 | `name` defaults to the directory name and sets the `/` command; the directory name also invokes the skill | "How a skill gets its command name" | yes |
+| C13 | "Keep `SKILL.md` under 500 lines"; after compaction the first 5,000 tokens of each invoked skill are re-attached (25,000 total) | "Add supporting files" tip; "Skill content lifecycle" | yes |
+| C14 | `disable-model-invocation: true`: the description is not in context; only the user invokes the skill | "Control who invokes a skill" | yes |
+| C15 | Field names must match exactly; an unknown field is ignored silently | "Frontmatter reference" | yes |
+| C16 | `.claude/skills/<name>.md` (a file directly in the skills directory) does not load as a skill | only `<skill-name>/SKILL.md` is documented; `.claude/commands/*.md` is the file form | yes (documented layout) |
+| C17 | Deeper layouts (`.claude/skills/<group>/<name>/SKILL.md`) | not documented | **no** |
+| C18 | Unclosed frontmatter (opening `---`, no closing one) | not documented | **no** (probe treats it as "no frontmatter", same fix) |
+
+Agent Skills spec:
+
+| # | Fact | Source | Confirmed |
+|---|---|---|---|
+| S1 | `name`: 1–64 chars, `a-z`, `0-9`, `-`; no leading, trailing, or doubled hyphen; must match the parent directory name | specification.md, "name field" | yes |
+| S2 | `description`: 1–1,024 chars, non-empty | "description field" | yes |
+| S3 | Keep `SKILL.md` under 500 lines; body under 5,000 tokens recommended; file references relative to the skill root, one level deep | "Progressive disclosure", "File references" | yes |
+| S4 | YAML: a plain (unquoted) scalar cannot contain `: `; `[x] text` opens a flow sequence and fails | YAML 1.2, 7.3.3 plain scalars (the reason OpenCode's `sanitize` exists, see O7) | yes |
+
+OpenCode 2:
+
+| # | Fact | Source | Confirmed |
+|---|---|---|---|
+| O1 | In every directory from the working directory **up to `/`** (`fs.up` with no `stop`), OpenCode reads `.claude/skills/` and `.agents/skills/` | `config/discovery.ts` (`candidates`, `fs.up`), `config/plugin/compatibility.ts` (`path.join(root, "skills")`), `util/src/fs-util.ts` (`up`) | yes |
+| O2 | Each `.opencode/` directory on that walk adds `skill/` and `skills/` | `config/discovery.ts` (`project`), `config.ts` (`loadDirectory`), `config/plugin/skill.ts` (`sources`) | yes |
+| O3 | Global: `~/.claude/skills/`, `~/.agents/skills/`, the global config directory's `skill(s)/`, and the system directory (`/etc/opencode`) | `config/discovery.ts` (`globalClaudeDirectory`, `globalAgentsDirectory`, `systemDirectory`) | yes |
+| O4 | Directories below the working directory are never searched for skills; the read tool discovers only `AGENTS.md` | `config/discovery.ts` (walk is upward only), `tool/plugin/read.ts` (`FILENAME = "AGENTS.md"`) | yes |
+| O5 | Scan: a directory holding `SKILL.md` (exact name) is a skill; depth up to 6; `*.md` files directly in a skill root are skills named after the file; entries starting with `.` and `node_modules`, `.git`, `.venv`, `venv`, `__pycache__` are skipped | `config/plugin/skill-scan.ts` | yes |
+| O6 | Skill id = directory name; frontmatter `name` is only the display name | `config/plugin/skill-file.ts` (`id`, `Skill.Name.make(frontmatter.name ?? id)`) | yes |
+| O7 | Frontmatter schema: `name`, `description` (strings), `metadata`, `disable-model-invocation`; any other key, `when_to_use` included, is not read; a non-string `name` or `description` skips the skill | `config/plugin/skill-file.ts` (`Frontmatter`, `decodeFrontmatter`) | yes |
+| O8 | YAML is parsed by gray-matter; on failure `sanitize` rewrites plain values that contain `:` or start with `[x] text` as block scalars and retries; a second failure skips the skill | `config/markdown.ts` | yes |
+| O9 | Only skills with a `description` and `autoinvoke` not false are listed to the model; `disable-model-invocation: true` sets `autoinvoke` false | `skill/instructions.ts` (`load`), `config/plugin/skill-file.ts` | yes |
+| O10 | Same id inside the compatibility plugin: later wins; order `~/.claude`, project `.claude` farthest to nearest, `~/.agents`, project `.agents` farthest to nearest. So a project `.claude/skills/x` beats `~/.claude/skills/x` | `config/plugin/compatibility.ts` (`loaded.set`), `config/discovery.ts` (`claude`, `agents`, `toReversed`) | yes |
+| O11 | Which wins between the compatibility plugin (`.claude`, `.agents`) and the config skill plugin (`.opencode`, configured `skills`) for the same id | plugin activation order not found | **no** |
+| O12 | No size limit on `SKILL.md`; loading returns the body and up to 10 sampled files | `skill.ts` (`prepare`) | yes (no limit found) |
+| O13 | Global config directory honors `XDG_CONFIG_HOME` | `@opencode/util/global` not read | **no** |
+| O14 | `opencode.json` `skills` entries (paths, `~/` paths, or URLs) add skill sources | `config/plugin/skill.ts` (`sources`) | yes (not probed: configuration, see ADR 4) |
+
+`.claude/skills/<name>/SKILL.md` is therefore the only layout both agents read the same way.
+The [Agent Skills spec](https://agentskills.io/specification) adds the portable rules:
+`name` is 1–64 chars of `a-z`, `0-9`, and single hyphens, and matches its directory;
+`description` is 1–1,024 chars; references are relative to the skill root.
+
+| Id | Probe | Verdict |
+| --- | --- | --- |
+| `SK01` | project skills exist | warn when no skill is found in any root, at the root or below; every other probe is then `n/a` |
+| `SK02` | both agents reach each skill | warn for a skill only in `.agents/skills/`, `.opencode/skills/`, or `.opencode/skill/`: Claude Code never loads it |
+| `SK03` | one copy per name | warn when two roots of the same directory hold a skill of the same name with different `SKILL.md` content: Claude Code reads the `.claude` copy, OpenCode keeps one by directory id |
+| `SK04` | layout both agents load | warn for a `*.md` file directly in a skill root (OpenCode loads it as a skill, Claude Code does not) and for a skill directory whose only `SKILL.md` is a case variant (`skill.md`: neither agent loads it) |
+| `SK05` | nested skill roots | warn for each skill root below the repository root: Claude Code loads it once it works there, OpenCode only in a session started inside that subtree |
+| `SK06` | frontmatter parses | fail when `SKILL.md` does not open with `---` on line 1 or never closes it; fail when a top-level unquoted value holds `: ` or starts with `[x] text`, which YAML rejects: Claude Code then loads the skill with no description, OpenCode repairs it |
+| `SK07` | a description to match | fail when `description` is missing, empty, or not a string, unless `disable-model-invocation` is true: OpenCode never lists the skill (or skips it), Claude Code matches on the first body line |
+| `SK08` | description length | `description` + `when_to_use` chars: warn above 1,024 (the spec's maximum, enforced by claude.ai uploads and the Skills API), fail above 1,536 (Claude Code truncates the listing) |
+| `SK09` | trigger text OpenCode reads | warn when `when_to_use` is set: OpenCode never reads it, so its trigger phrases reach Claude Code only |
+| `SK10` | name | fail for a directory or `name` that Claude Code reserves (`synced` in any case, `anthropic-skills…`); warn for a name outside the spec's charset, and for a `name` that differs from the directory (Claude Code invokes `/name`, OpenCode the directory id) |
+| `SK11` | body budget | warn above 500 lines (Claude Code docs and the spec) |
+| `SK12` | references resolve | fail for each relative Markdown link in `SKILL.md`, outside code, whose target does not exist; links that leave the repository are not judged |
+| `SK13` | skill inventory | lists every skill with its root, for the review to read |
+| `SK14` | user scope: skill roots only OpenCode reads | warn for `.claude/skills/`, `.agents/skills/`, `.opencode/skill(s)/` in a parent directory of the repository (OpenCode loads them in every session here, Claude Code stops at the repository root), and for `~/.agents/skills/` and `~/.config/opencode/skill(s)/` (personal skills Claude Code never reads) |
+| `SK15` | user scope: personal skills that shadow project skills | warn for each project skill whose name is also in `~/.claude/skills/`: Claude Code runs the personal copy, OpenCode the project one |
+
+The tree is the one `agents-md` walks (hidden files, `.gitignore` honored, `.git/` and
+`.claude/worktrees/` skipped); symbolic-link skill folders are followed. `SK07`–`SK11` skip
+a skill that `SK06` reports without frontmatter. The frontmatter is read by a line scanner
+for top-level keys and their scalar values, not by a YAML parser: it decides only the cases
+above, so no YAML crate is admitted (ADR 3). `SK14` and `SK15` are user scope: labeled,
+warn only, skipped by `--repo-only`.
+
+The review (`skills-review`) judges what reading decides:
+
+| # | Criterion | Source |
+| --- | --- | --- |
+| 1 | The description says what the skill does and when to use it, key use case first, in words a user would type | Claude Code skills docs, "Skill not triggering"; spec, `description` |
+| 2 | No two skills claim the same requests | Claude Code skills docs, "Skill triggers too often" |
+| 3 | Side-effect workflows (deploy, commit, push, publish) set `disable-model-invocation: true`; background knowledge sets `user-invocable: false` | Claude Code skills docs, "Control who invokes a skill" |
+| 4 | The body states what to do, not narration: every loaded line is a recurring cost | Claude Code skills docs, "Types of skill content" |
+| 5 | Detail lives in files one level deep, each named with what it holds and when to read it | spec, "File references"; Claude Code, "Add supporting files" |
+| 6 | The instructions that matter most come first: compaction keeps only the start | Claude Code skills docs, "Skill content lifecycle" |
+| 7 | Guidance is phrased to hold for the whole task, not as one-time steps | Claude Code skills docs, "Claude stops following a skill" |
+| 8 | A rule that must hold every time is a hook, not skill prose | same section |
+| 9 | Scripts and `` !`command` `` lines hold no prompt injection, exfiltration, dropper (`curl … \| sh`, decode-and-exec), or unconfirmed destructive command; `allowed-tools` grants no blanket `Bash` | ADR 1, pillar 2 "Safety"; SkillSpector pattern categories (ADR 2) |
+| 10 | Behavior both agents need sits in fields both read (`name`, `description`, `disable-model-invocation`); a body that relies on Claude Code-only fields (`context: fork`, `paths`, `allowed-tools`, `hooks`, `!` injection) still works without them | OpenCode `config/plugin/skill-file.ts`; Claude Code, "Frontmatter reference" |
+| 11 | It belongs in a skill: not a rule every session needs (that is `AGENTS.md`), not a one-line command | `agents-md-review` criterion 15, inverted |
+| 12 | The commands, paths, and tools it names exist in this repository | ADR 1, pillar 1 "no references to files or commands that do not exist" |
+
+Not probed yet: script safety and per-agent format lint by an external scanner
+(SkillSpector `--no-llm --format json` and agnix are the candidates, ADR 1 "integrate";
+detecting and running one amends this ADR when it lands — until then the review covers
+script safety),
+deeper layouts such as `.claude/skills/<group>/<name>/SKILL.md` (OpenCode loads them;
+Claude Code documents only `<name>/SKILL.md`), unclosed frontmatter in Claude Code (probed
+as missing), YAML errors other than the two `SK06` cases, `.claude/commands/` files,
+skills added by `opencode.json` `skills` entries or `--add-dir`, the order between OpenCode's
+`.opencode` and `.claude`/`.agents` sources for one id, `XDG_CONFIG_HOME`, enterprise and
+plugin skills, and backticked paths in skill bodies.
+
 ### Tests
 
 Every gate is tested at three levels, all run by `cargo xtask check`:
@@ -196,6 +335,8 @@ negatives that a deterministic gate cannot justify; that judgment belongs to the
   is not settled (ADR 1, open question).
 - `AM07`/`AM08` recognize one convention by name; other conventions only pass in the
   review.
+- The `skills` frontmatter scanner is not a YAML parser: it decides two YAML errors
+  (`SK06`); the others reach only the review.
 
 ## References
 
@@ -209,8 +350,26 @@ negatives that a deterministic gate cannot justify; that judgment belongs to the
   (subdirectory `AGENTS.md` on read). The V1 rules page
   (<https://opencode.ai/docs/rules/>) still describes a `CLAUDE.md` fallback that the V2
   source no longer has.
+- [Claude Code — Extend Claude with skills](https://code.claude.com/docs/en/skills) —
+  skill locations, parent walk up to the repository root, nested skills on demand, name
+  precedence, frontmatter fields, the 1,536-char listing cap, the 500-line tip,
+  compaction, reserved names.
+- [Agent Skills specification](https://agentskills.io/specification) — `name` and
+  `description` constraints, 500 lines, relative file references.
+- [OpenCode source](https://github.com/anomalyco/opencode/tree/d759c548aa/packages/core/src)
+  at `d759c548aa` (2026-11-14): `config/discovery.ts` (`.claude`, `.agents`, `.opencode`
+  in every directory up to `/`, the global roots), `config/plugin/compatibility.ts` and
+  `config/plugin/skill.ts` (`skills/` and `skill/` roots, source order),
+  `config/plugin/skill-scan.ts` (layout), `config/plugin/skill-file.ts` (id, fields),
+  `config/markdown.ts` (YAML repair), `skill/instructions.ts` (only described skills are
+  listed).
+- [SkillSpector](https://github.com/NVIDIA/SkillSpector) — skill-safety scanner, the
+  integration candidate for `skills` (25,972 stars; 986 commits in the last 14 days;
+  v2.13.4, 2026-11-04; 282 issues and pull requests opened, 273 closed in 30 days;
+  measured 2026-11-14).
+- `skills` rubric sources: `apps/skills-chkr/skills/skills-review/references/sources.md`.
 - [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) — kaizen skill, `TODO.md`
   handoff, ADR 0003 (AGENTS.md as the canonical rules file).
-- Rubric sources: `apps/agents-md-chkr/skills/agents-md-review/references/sources.md`.
+- `agents-md` rubric sources: `apps/agents-md-chkr/skills/agents-md-review/references/sources.md`.
 - ADR 1: `2026-11-13-adr1-main-intent.md` — pillars and principles.
 - ADR 3: `2026-11-13-adr3-rust-stack.md` — workspace, lints, coverage.
