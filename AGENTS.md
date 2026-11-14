@@ -89,12 +89,14 @@ code and the score; an advisory review skill judges content. Read ADR 4 before a
 
 - `cargo agents-md-chkr [--repo-only] [PATH]`: run the `agents-md` gate (exit 0 pass, 1 fail,
   2 error). Without `--repo-only` it reads every parent directory and `$HOME`.
+- `cargo skills-chkr [--repo-only] [PATH]`: run the `skills` gate; same exit codes and scopes.
 - `cargo dummy [PATH] [--all]`: run the dummy app (default: current directory).
 - `cargo test`: every unit, property, integration, and doc test on stable.
 - `cargo xtask check`: every gate (fmt, clippy `-D warnings`, test, doc, cargo-deny,
   container e2e, 90% branch coverage). It must pass before every commit; the pre-commit
   hook runs it. It needs a running docker daemon.
-- `cargo xtask e2e`: container end-to-end tests only (`tests/container.rs`).
+- `cargo xtask e2e`: container end-to-end tests only (`tests/container.rs` of every gate in
+  `CONTAINER_GATES`, `xtask/src/plan.rs`).
 - `cargo xtask cov`: branch coverage only; writes `lcov.info` and `coverage/html/`.
 - `mise install`, `cargo xtask setup`, then `cargo xtask install-hooks`: once per clone.
 - The shell is zsh: brace a variable before `:` (`"${ref}:path"`, since `:a`, `:h`,

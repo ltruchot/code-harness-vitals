@@ -16,7 +16,8 @@ model in ADR 4.
 | Toolchain and gates on a dummy app      | ✅ Done    | `apps/dummy/`, `xtask/`                 |
 | Gate model (probes + agent review)      | ✅ Done    | `2026-11-14-adr4-gate-model.md`         |
 | Pillar 1: `agents-md` gate              | ✅ Done    | `apps/agents-md-chkr/`                  |
-| Gates for pillars 2–6                   | ⏳ Planned | -                                       |
+| Pillar 2: `skills` gate                 | ✅ Done    | `apps/skills-chkr/`                     |
+| Gates for pillars 3–6                   | ⏳ Planned | -                                       |
 | CLI, JSON/SARIF output, CI action       | ⏳ Planned | -                                       |
 
 ---

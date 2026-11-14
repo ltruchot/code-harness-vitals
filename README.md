@@ -15,7 +15,7 @@ Every check is a **gate** with two parts:
   session. It runs the probes first, then proposes at most five `ADD` / `CUT` / `MOVE` /
   `REWORD` edits, labeled advisory. Nothing is edited without your yes.
 
-> **Status: pre-alpha.** One gate (`agents-md`) is implemented; the others are specified.
+> **Status: pre-alpha.** Two gates (`agents-md`, `skills`) are implemented; the others are specified.
 > See the [intent ADR](docs/architecture_decision_records/2026-11-13-adr1-main-intent.md)
 > and the [gate model ADR](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md).
 
@@ -39,7 +39,7 @@ with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
 | Gate | Pillar | Deterministic probes (Rust) | Agent review (skill, advisory) | Status |
 | ---- | ------ | --------------------------- | ------------------------------ | ------ |
 | [`agents-md`](apps/agents-md-chkr/) | 1 | `AM01`–`AM15`, below | [`agents-md-review`](apps/agents-md-chkr/skills/agents-md-review/SKILL.md): 18-criterion rubric | ✅ |
-| `skills` | 2 | frontmatter, description length, body budget, referenced files exist | triggerability, overlap, unsafe scripts | ⏳ |
+| [`skills`](apps/skills-chkr/) | 2 | `SK01`–`SK15`, below | [`skills-review`](apps/skills-chkr/skills/skills-review/SKILL.md): 12-criterion rubric | ✅ |
 | `codebase-memory` | 3 | a code-intelligence MCP server or plugin, wired in for both agents | - | ⏳ |
 | `context-limiting` | 4 | an output-capping tool or hook, wired in for both agents | - | ⏳ |
 | `commit-gates` | 5 | an active hook runner calling lint, format, types, tests, vulnerability and secret scans; CI runs the same | fit of the gate list to the stack | ⏳ |
@@ -84,6 +84,45 @@ in a skill, contradictions across the cascade, and rules only one agent sees. To
 `.claude/skills/` (Claude Code and OpenCode both read it), then ask your agent to review
 `AGENTS.md`.
 
+### `skills`
+
+```sh
+cargo skills-chkr /path/to/repo              # exit 0: no fail · 1: a probe failed · 2: cannot read
+cargo skills-chkr --repo-only /path/to/repo  # CI: skip the parent directories and home
+```
+
+Both agents read `SKILL.md`, but not from the same places: Claude Code loads
+`.claude/skills/` only, from the working directory up to the repository root; OpenCode
+also loads `.agents/skills/` and `.opencode/skill(s)/`, from every directory up to `/`,
+and never the nested roots below its working directory. They also read different
+frontmatter fields and react differently to the same YAML mistake. The gate checks where
+each skill lives, its frontmatter, sizes, and links, and, as user-scope findings that
+never fail the gate, the skill roots above the repository
+([ADR 4](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md#the-skills-gate)).
+
+| Probe | Checks | Fails or warns when |
+| ----- | ------ | ------------------- |
+| `SK01` | project skills exist | warn: none in any skill root |
+| `SK02` | both agents reach each skill | warn: a skill only in `.agents/skills/` or `.opencode/skill(s)/`, which Claude Code never loads |
+| `SK03` | one copy per name | warn: two roots hold the same skill name with different content |
+| `SK04` | layout | warn: a `*.md` file directly in a skill root (OpenCode only), or `skill.md` instead of `SKILL.md` (neither agent) |
+| `SK05` | nested skill roots | warn: a skill root below the repository root, which OpenCode loads only in a session started there |
+| `SK06` | frontmatter | fail: no `---` on line 1, never closed, or an unquoted value YAML rejects (`: `, `[x] text`, a leading `` ` `` or `@`) |
+| `SK07` | description | fail: missing or not a string, unless `disable-model-invocation: true` |
+| `SK08` | description length | warn above 1,024 chars, fail above 1,536 (`description` + `when_to_use`) |
+| `SK09` | `when_to_use` | warn: OpenCode never reads it |
+| `SK10` | name | fail: reserved by Claude Code or not a string; warn: off the Agent Skills rule, or different from the folder |
+| `SK11` | lines | warn above 500 |
+| `SK12` | references | fail: a relative link, outside code, to a file that does not exist |
+| `SK13` | skill inventory | lists every skill |
+| `SK14` | user scope: skill roots only OpenCode reads | warn: in a parent directory, or `~/.agents/skills`, `~/.config/opencode/skill(s)` |
+| `SK15` | user scope: personal skills that shadow project ones | warn: Claude Code runs the personal copy, OpenCode the project one |
+
+The review skill checks what probes cannot: descriptions that trigger, overlapping
+skills, invocation control, body cost and order, script safety, and behavior that relies
+on Claude Code-only fields. To use it, copy `apps/skills-chkr/skills/skills-review/` into
+`.claude/skills/`, then ask your agent to review the skills.
+
 ## Develop
 
 Rust workspace; every tool version is pinned in `mise.toml`. Details in
@@ -94,6 +133,7 @@ mise install               # once: Rust, cargo-deny, cargo-llvm-cov
 cargo xtask setup          # once: coverage nightly
 cargo xtask install-hooks  # once: pre-commit runs every gate
 cargo agents-md-chkr       # run the agents-md gate on the current directory
+cargo skills-chkr          # run the skills gate on the current directory
 cargo dummy                # count files, lines, and chars in the current directory
 cargo test                 # run the tests
 cargo xtask e2e            # container end-to-end tests: a fake filesystem root (needs docker)
