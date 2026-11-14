@@ -10,8 +10,12 @@ Fast loop while building, full gate only to commit:
 cargo check --offline -p <id>-chkr        # once: adds the new member to Cargo.lock
 cargo test -p <id>-chkr                   # unit and real-tree tests, seconds
 cargo xtask e2e                           # container tests
-cargo xtask check                         # every gate; the pre-commit hook runs it
+cargo xtask check                         # every gate, before each commit
 ```
+
+The `cargo check --offline` line works while the gate uses only workspace crates. A new
+external crate meets the ADR 3 admission criteria first, then enters `Cargo.lock` through
+a plain `cargo check`.
 
 | Level | Where | Pattern |
 |---|---|---|
@@ -31,7 +35,7 @@ Containers:
 
 - Add the gate to `e2e()` in `xtask/src/plan.rs`: build the static binary
   (`--target` `STATIC_TARGET`, `-p <id>-chkr`), then
-  `cargo test -p <id>-chkr --test container -- --ignored`. Update the plan tests, which
-  count the steps of `check`.
+  `cargo test -p <id>-chkr --test container -- --ignored`. `check` runs `e2e()`, so update
+  both plan tests: the `e2e` step list and the step count of `check`.
 - The image helper reads the binary from
   `target/x86_64-unknown-linux-musl/release/<id>-chkr`.

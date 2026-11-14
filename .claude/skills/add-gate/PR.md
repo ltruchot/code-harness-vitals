@@ -1,6 +1,6 @@
 # The gate's pull request
 
-Pushing publishes the branch, so confirm with the user first.
+Confirm with the user before pushing. Then:
 
 ```sh
 git push -u origin gate/<id>
@@ -20,7 +20,7 @@ The body, in this order:
 
 ## Sources
 
-<each behavior claim, with its docs URL or OpenCode commit and file>
+<each behavior claim, with its docs URL, OpenCode commit and file, or empirical run>
 
 ## Tests
 
@@ -33,5 +33,5 @@ The body, in this order:
 
 End the body with the PR attribution lines from the session instructions.
 
-Run the `code-review` skill on the PR number. Fix each confirmed finding in a new commit
-on the branch, never with an amend: the PR history is the review trail.
+Call the Skill tool with `code-review` on the PR number. Fix each confirmed finding in a
+new commit on the branch, never with an amend or a rebase once the PR is open.

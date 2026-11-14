@@ -5,113 +5,109 @@ description: Add a gate to code-harness-vitals end to end, on its own branch and
 
 # Add a gate
 
-A gate has two halves (ADR 4): deterministic probes that alone set the exit status, and an
-advisory review skill. The `agents-md` gate is the **live template**: copy the shape of
-`apps/agents-md-chkr/` and of the ADR 4 section "The agents-md gate", never a stale
-copy of them.
+The `agents-md` gate is the **live template**: `apps/agents-md-chkr/` and the ADR 4
+section "The agents-md gate". Copy its shape from there; this skill holds no copy of it.
 
-**One layer, one commit**, on branch `gate/<id>`: a reviewer reads the PR commit by
-commit. A fix that a later layer forces on an earlier one (the ADR, `vitals-utils`) goes
-in the commit that found it, and its message says so. The pre-commit hook runs the full
-`cargo xtask check` (minutes, docker included) on the working tree, not the index: build
-each layer completely, iterate with the fast loop in [TESTS.md](TESTS.md), and commit once.
+**One layer, one commit**, on branch `gate/<id>`. A fix that a later layer forces on an
+earlier one (the ADR, `vitals-utils`) goes in the commit that found it, and its message
+says so. The pre-commit hook checks the working tree, not the index, and takes minutes:
+build each layer completely with the fast loop in [TESTS.md](TESTS.md), then commit once.
 
 ## 1. Frame
 
-Read `TODO.md`, the pillar in ADR 1, and in ADR 4 the gate anatomy, the split rule, the
-review contract, and the catalog row. Pick the gate id and a probe prefix no gate uses.
-The PR's base must hold the live template: when `git log --oneline origin/main..main`
-lists commits, ask the user to push `main` first, or the PR carries them. Then
-`git switch -c gate/<id> main`.
+Read `TODO.md`, the pillar in ADR 1, and the ADR 4 sections "Gate anatomy", "What goes
+where", "Review contract", and "Gate catalog". Pick the gate id and a probe prefix.
 
-The first PR ships the gate's own probes. Integrating an external scanner (ADR 1:
-integrate, do not reimplement) is a later PR with its own ADR amendment.
+The base must be the published `main`, holding the live template: after `git fetch`,
+`git rev-list --left-right --count origin/main...main` prints `0 0`. When it does not,
+ask the user to push or pull `main` first. Then `git switch -c gate/<id> main`.
 
-**Done when:** the branch exists on a base that holds `apps/agents-md-chkr/`, and you can
-name the gate's pillar, id, and prefix.
+This PR ships the gate's own probes. Integrating an external scanner is a later PR with
+its own ADR amendment.
+
+**Done when:** the branch exists on that base, and `git grep -n '"<PREFIX>01"'` finds
+nothing.
 
 ## 2. Source the behavior
 
-Every probe encodes a claim about how Claude Code or OpenCode behaves, and the tests
-encode the same claim, so only a source catches a wrong one. Map the **cascade** of every
-file the gate judges, for both agents: where it loads from (root, subdirectories, parent
-directories, home, global config), what shadows what, name variants, and size limits.
-How to reach each source: [RESEARCH.md](RESEARCH.md).
+Every probe encodes a claim about how Claude Code or OpenCode behaves, and its tests
+encode the same claim. Map the **cascade** of every file the gate judges, for both agents:
+where it loads from (root, subdirectories, parent directories, home, global config), what
+shadows what, name variants, and size limits. How to reach each source:
+[RESEARCH.md](RESEARCH.md).
 
-A fact that contradicts an existing gate (a marker, a probe, a fix text) is a bug in that
-gate: fix it in the shared layer (step 4) and name it in the PR.
+A fact that contradicts an existing gate is a bug there: fix it on `main` first, in its
+own commit with its tests (`Fix <probe>: <the claim>`), then rebase the branch onto it.
 
-**Done when:** a table lists each fact, the agent, the source (docs URL, OpenCode commit
-and file, or an empirical run), and whether it is confirmed. An unconfirmed fact can feed
-the review, never a probe.
+**Done when:** a table lists every fact with its agent, its source (docs URL, OpenCode
+commit and file, or an empirical run with its version), and confirmed yes or no. An
+unconfirmed fact feeds the review or "Not probed yet", never a probe.
 
 ## 3. Specify in ADR 4 — commit
 
-Design the probes with the ADR 4 split rule. Give each probe an id, a scope (repository,
-or user: warn at most, skipped by `--repo-only`), its verdicts, its evidence path, and a
-fix for every warn and fail. List the review rubric, each criterion with its source.
-Write all of it into ADR 4 the way the `agents-md` section reads: the catalog row set to
-✅, a `### The <id> gate` section (the step 2 facts table with its Source column, the
-probe table, not probed yet), and the Implementation Status rows and References. A decision that ADR 4 does not cover (an
-external scanner, a new crate, an output format) amends the ADR that owns it.
+Design the probes per "What goes where". Give each probe an id, a scope (repository, or
+user: warn at most, skipped by `--repo-only`), its verdicts, its evidence path, and a fix
+for every warn and fail. List the review rubric, each criterion with its source. Add a
+`### The <id> gate` section to ADR 4 shaped like the `agents-md` one, holding the whole
+step 2 table, the probe table, and what is not probed yet; add its References. The
+catalog row stays ⏳ until step 7. A decision ADR 4 does not cover (a new crate, an
+output format) amends the ADR that owns it.
 
-**Done when:** a reviewer could implement the probes from the ADR alone. Commit
-`Specify the <id> gate in ADR 4`.
+**Done when:** every probe row has an id, scope, verdicts, evidence, and fix, and every
+fact row has a source. Commit `Specify the <id> gate in ADR 4`.
 
 ## 4. Share before you write — commit if anything moved
 
 Read `pkg/vitals-utils/src/` and the `agents-md-chkr` modules before writing any
 function. Product code is never duplicated:
 
-- A helper the new gate needs that lives in `agents-md-chkr` moves to `vitals-utils`, with
-  its tests, and `agents-md-chkr` imports it from there.
-- Every filesystem primitive lives in `vitals_utils::fs`, even one a single gate uses: it
-  is the one boundary.
+- A helper the gate needs that lives in `agents-md-chkr` moves to `vitals-utils` with its
+  tests, and `agents-md-chkr` imports it from there.
+- Every filesystem primitive goes to `vitals_utils::fs`, even one that a single gate
+  uses.
 - A helper found during step 5 moves in the step 5 commit.
 
-Test helpers are the exception: integration test files cannot import each other, so they
-are copied.
-
-**Done when:** no product function in the new gate duplicates one elsewhere. Commit
-`Move <helper> to vitals-utils` when something moved.
+**Done when:** `git grep -n 'fn <name>'` finds one definition of each moved helper.
+Commit `Share <helpers> through vitals-utils`.
 
 ## 5. Build the probes — commit
 
-Mirror `apps/agents-md-chkr/`: `audit(root, Reach)` in `lib.rs`; `main.rs` with `[PATH]`
-and `--repo-only`; all I/O in `snapshot.rs` through `vitals_utils::fs`; one pure function
-per probe. Add the `<id>-chkr` alias to `.cargo/config.toml`. Test at all three levels
-per [TESTS.md](TESTS.md).
+The files, as in `agents-md-chkr`: `lib.rs` with `audit(root, Reach)`; `main.rs` with
+`[PATH]` and `--repo-only`; all I/O in `snapshot.rs` through `vitals_utils::fs`; one pure
+function per probe. Add the `<id>-chkr` alias to `.cargo/config.toml`. Tests at all three
+levels, per [TESTS.md](TESTS.md).
 
-**Done when:** `cargo xtask check` passes, and `cargo <id>-chkr --repo-only .` runs on
-this repository. Commit `Add the <id> gate probes`.
+**Done when:** `cargo xtask check` passes and `cargo <id>-chkr --repo-only .` runs on
+this repository. Commit `Add the <id> gate probes`, with the `Cargo.lock` change.
 
 ## 6. Write the review skill — commit
 
 Create `apps/<id>-chkr/skills/<id>-review/SKILL.md` and `references/sources.md`, in the
 shape of `agents-md-review`: run the probes and quote them, read what they point to,
 judge with a numbered rubric (present, `ADD`, `MOVE`, `CUT`, `REWORD`), report at most
-five kaizen blocks labeled advisory, and apply only what the user accepts.
+five items in the block format of `agents-md-review` step 4, labeled advisory, and apply
+only what the user accepts.
 
-**Done when:** the skill, run by hand, quotes the probes and returns at most five blocks:
-on this repository, or on a scratch repository built from the gate's test fixtures when
-this one has nothing for the gate to judge. Commit `Add the <id>-review skill`.
+**Done when:** run by hand, it quotes the probes and returns at most five blocks: on this
+repository, or on a scratch repository built from the gate's test fixtures when this one
+has nothing for the gate to judge. Commit `Add the <id>-review skill`.
 
 ## 7. Document — commit
 
-Update the README (the Gates row, a `### <id>` section with the command and the probe
-table, the Develop block), the Implementation Status row in ADR 1, the alias list and
-commands table in ADR 3, the "Commands" section of AGENTS.md, and `TODO.md` ("Where we
-stopped", and the not-probed-yet items under "Later").
+Set the ADR 4 catalog row and the Implementation Status rows to ✅. Update the README
+(the Gates row, a `### <id>` section with the command and the probe table, the Develop
+block), the Implementation Status row in ADR 1, the alias list and commands table in ADR
+3, the "Commands" section of AGENTS.md, and `TODO.md` ("Where we stopped", and the
+not-probed-yet items under "Later").
 
-**Done when:** `git grep` finds no stale probe range or path, and AGENTS.md is under 200
-lines. Commit `Document the <id> gate`.
+**Done when:** every line of `git grep -n '<PREFIX>[0-9]'` and `git grep -n '<id>-chkr'`
+matches the final probe range and paths, and AGENTS.md is under 200 lines. Commit
+`Document the <id> gate`.
 
 ## 8. Open the pull request
 
-Check `git log --oneline main..` for one commit per layer, and grep
-`git diff main..` for names and emails. Then follow [PR.md](PR.md): confirm before
-pushing, open a draft PR, call the Skill tool with `code-review` on it, and fix the
-confirmed findings in new commits.
+Follow [PR.md](PR.md).
 
-**Done when:** the draft PR exists, its review is clean, and CI is green. Then
+**Done when:** `git log --oneline main..` shows one commit per layer, the draft PR is
+open, `code-review` leaves no confirmed finding unfixed, and CI is green. Then
 `gh pr ready`, and call the Skill tool with `kaizen`.

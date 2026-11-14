@@ -43,11 +43,11 @@ for l in sys.stdin:
 
 Record `claude_code_version` as the source. The event lists skills, commands, agents,
 plugins, MCP servers, and tools; it does not list the instruction files loaded
-(`memory_paths` is the auto-memory directory only). It is a billed run:
-keep the prompt trivial and run it once per question.
+(`memory_paths` is the auto-memory directory only). Billed: keep the prompt trivial and
+run it once per question.
 
 ## Existing tools
 
-ADR 2 catalogs the scanners per pillar. When a maintained one already covers part of the
-gate, the gate detects and runs it (ADR 1: integrate, do not reimplement). Re-measure its
-freshness before citing it (AGENTS.md, "Architecture Decision Records").
+ADR 2 catalogs the scanners per pillar. Record each maintained one that covers part of the
+gate under "Not probed yet" in the gate's ADR section, as the later integration PR.
+Re-measure its freshness before citing it (AGENTS.md, "Architecture Decision Records").
