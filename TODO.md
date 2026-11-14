@@ -1,7 +1,8 @@
 # TODO
 
 ## Where we stopped
-Nothing in progress. The `agents-md` gate covers the whole instruction cascade (ADR 4,
+Nothing in progress. `main` is 3 commits ahead of `origin/main` (through `565678a`), not
+pushed: next action is `git push`, then watch CI run the container step. The `agents-md` gate covers the whole instruction cascade (ADR 4,
 "The agents-md gate"): root files `AM01`–`AM08`, nested files `AM09`–`AM13`, and parent
 directories in user scope `AM14`–`AM15` (warn only; `--repo-only` skips them).
 Tests run at three levels: unit, e2e on `tempfile` trees (`tests/cli.rs`, 24 cases), and

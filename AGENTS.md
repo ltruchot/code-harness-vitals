@@ -58,6 +58,8 @@ code and the score; an advisory review skill judges content. Read ADR 4 before a
   `allow`. Do not relax `Cargo.toml` or `clippy.toml` to make a gate pass.
 - Test modules carry `#[cfg_attr(coverage_nightly, coverage(off))]`; integration test
   files start with `#![cfg(test)]`.
+- Doc comments write CamelCase names in backticks (`` `OpenCode` ``): clippy
+  `doc_markdown` rejects them bare.
 - Before writing a function or adding a crate, search `pkg/vitals-utils/` and the
   crate's own modules for one that exists. A helper that a second gate needs moves to
   `vitals-utils`.
@@ -80,6 +82,8 @@ code and the score; an advisory review skill judges content. Read ADR 4 before a
 - Measure it with `gh api graphql` (aliased `repository { history(since:) releases }`
   plus `search(type: ISSUE) { issueCount }`), never a loop over REST `search/issues`:
   that endpoint allows 30 requests/min and fails partway through a batch.
+- OpenCode behavior: the opencode.ai/docs pages describe V1. Read the V2 source
+  (`anomalyco/opencode`, `packages/core/src`) and cite the commit.
 
 ## Commands
 
