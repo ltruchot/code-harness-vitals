@@ -45,7 +45,7 @@ will enforce on others. Requirements:
   (`pkg/vitals-utils`, shared by the gates), automation in `xtask/` (the cargo-xtask
   pattern: plain Rust, no extra binary). Workspace crates are path entries in
   `[workspace.dependencies]`. Aliases in `.cargo/config.toml`: `cargo dummy`,
-  `cargo agents-md-chkr`, `cargo xtask`.
+  `cargo agents-md-chkr`, `cargo skills-chkr`, `cargo xtask`.
 - `Cargo.lock` is committed; every gate runs with `--locked`.
 
 ### Toolchain
@@ -203,6 +203,7 @@ patterns.
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | `cargo dummy [PATH] [--all]` | Runs the dummy app (default: current directory, project files only)          |
 | `cargo agents-md-chkr [PATH]`| Runs the `agents-md` gate's probes (ADR 4); exit 0 / 1 (a fail) / 2 (error)  |
+| `cargo skills-chkr [PATH]`   | Runs the `skills` gate's probes (ADR 4); exit 0 / 1 (a fail) / 2 (error)     |
 | `cargo test`                 | Runs every unit, property, integration, and doc test on stable              |
 | `cargo xtask cov`            | Branch coverage on the pinned nightly, reports, and the 90% gate             |
 | `cargo xtask e2e`            | Static binary, then the container end-to-end tests (needs docker)            |
