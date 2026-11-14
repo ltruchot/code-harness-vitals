@@ -39,6 +39,51 @@ pub enum Scope {
     User,
 }
 
+/// How far a gate run looks (ADR 1, "Two scopes").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Reach {
+    /// The repository and the user scope: every parent directory up to the filesystem
+    /// root, and the home directory.
+    #[default]
+    WithUserScope,
+    /// The repository only, for reproducible CI runs.
+    RepositoryOnly,
+}
+
+impl Reach {
+    /// The reach a `--repo-only` flag selects.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vitals_utils::Reach;
+    ///
+    /// assert_eq!(Reach::from_repo_only(true), Reach::RepositoryOnly);
+    /// assert!(Reach::from_repo_only(false).includes_user_scope());
+    /// ```
+    #[must_use]
+    pub const fn from_repo_only(repo_only: bool) -> Self {
+        if repo_only {
+            Self::RepositoryOnly
+        } else {
+            Self::WithUserScope
+        }
+    }
+
+    /// Whether the run reads outside the repository.
+    #[must_use]
+    pub const fn includes_user_scope(self) -> bool {
+        matches!(self, Self::WithUserScope)
+    }
+}
+
+/// `found` when a probe found something, else the single `pass` finding: per-file probes
+/// report each offending file, or one pass for the whole tree.
+#[must_use]
+pub fn or_pass(found: Vec<Finding>, pass: Finding) -> Vec<Finding> {
+    if found.is_empty() { vec![pass] } else { found }
+}
+
 /// One probe's conclusion: its stable id, the verdict, the file it is about, and the fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
@@ -263,7 +308,7 @@ impl fmt::Display for Report {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{Finding, Outcome, Report, Scope, Verdict};
+    use super::{Finding, Outcome, Reach, Report, Scope, Verdict, or_pass};
 
     fn finding(verdict: Verdict) -> Finding {
         Finding::new("T01", verdict, "AGENTS.md", "observed")
@@ -354,5 +399,20 @@ mod tests {
                 .to_string()
                 .ends_with("demo gate passed: 0 fail, 1 warn, 0 pass, 0 n/a")
         );
+    }
+
+    #[test]
+    fn reach_follows_the_repo_only_flag() {
+        assert_eq!(Reach::default(), Reach::WithUserScope);
+        assert_eq!(Reach::from_repo_only(false), Reach::WithUserScope);
+        assert!(!Reach::from_repo_only(true).includes_user_scope());
+    }
+
+    #[test]
+    fn or_pass_keeps_findings_or_falls_back_to_the_pass() {
+        let pass = finding(Verdict::Pass);
+        assert_eq!(or_pass(Vec::new(), pass.clone()), vec![pass.clone()]);
+        let found = vec![finding(Verdict::Warn)];
+        assert_eq!(or_pass(found.clone(), pass), found);
     }
 }

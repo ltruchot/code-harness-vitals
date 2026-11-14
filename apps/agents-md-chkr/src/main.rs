@@ -30,12 +30,7 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let reach = if cli.repo_only {
-        Reach::RepositoryOnly
-    } else {
-        Reach::WithUserScope
-    };
-    match audit(&cli.path, reach) {
+    match audit(&cli.path, Reach::from_repo_only(cli.repo_only)) {
         Ok(gate) => {
             println!("{gate}");
             gate.outcome().into()

@@ -18,7 +18,7 @@ use std::path::Path;
 use vitals_utils::{Error, Report};
 
 pub use probes::{CHARS, GATE, HANDOFF_WINDOW, LINES};
-pub use snapshot::Reach;
+pub use vitals_utils::Reach;
 
 /// Runs every probe of the `agents-md` gate on the repository at `root`, as far as `reach`.
 ///

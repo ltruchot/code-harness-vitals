@@ -74,9 +74,10 @@ in Claude Code and OpenCode, which read the same `SKILL.md`.
 - `apps/<gate>-chkr/`: one binary per gate, with its review skill in
   `skills/<gate>-review/`.
 - `pkg/vitals-utils/`: only code that two or more gates need — `Finding`, `Verdict`,
-  `Report`, `Outcome` (exit contract), `TextSize` and `Budget`, the marker paths agents
-  read (`AGENTS.md`, skill roots), and the filesystem boundary (`require_dir`,
-  `read_optional`, `link_target`). A helper that a second gate needs moves here; one
+  `Report`, `Outcome` (exit contract), `Reach` (`--repo-only`), `or_pass`, `TextSize` and
+  `Budget`, the marker paths agents read (`AGENTS.md`, skill roots), and the filesystem
+  boundary (`require_dir`, `read_optional`, `exists`, `link_target`, `project_files`,
+  `parent_dirs`). A helper that a second gate needs moves here; one
   needed by a single gate stays in its app.
 
 ### Gate catalog

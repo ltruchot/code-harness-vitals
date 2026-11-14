@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use vitals_utils::{Finding, TextSize, Verdict};
+use vitals_utils::{Finding, TextSize, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify, scope_dir};
 use crate::probes::{CHARS, LINES, layout};
@@ -31,10 +31,6 @@ fn shown(dir: &Path) -> PathBuf {
     } else {
         dir.to_path_buf()
     }
-}
-
-fn or_pass(found: Vec<Finding>, pass: Finding) -> Vec<Finding> {
-    if found.is_empty() { vec![pass] } else { found }
 }
 
 /// `AM09`: no nested `CLAUDE.md` or `CLAUDE.local.md` holds rules that `OpenCode` never reads,
