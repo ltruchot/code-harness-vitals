@@ -1,5 +1,6 @@
 [alias]
 dummy = "run --quiet --locked -p dummy --"
+agents-md-chkr = "run --quiet --locked -p agents-md-chkr --"
 xtask = "run --quiet --locked -p xtask --"
 
 # Dependency cooldown: never resolve a crate version published less than 3 days ago (ADR 3).
