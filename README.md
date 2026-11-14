@@ -68,7 +68,7 @@ repository and, as user-scope findings that never fail the gate, above it
 | `AM05` | lines | warn above 200, fail above 500 |
 | `AM06` | chars | fail above 40,000 |
 | `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist |
-| `AM08` | continuous improvement | warn: no `kaizen` skill; the fix points to [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) |
+| `AM08` | continuous improvement | warn: no `kaizen` skill in `.claude/skills/` (Claude Code reads no other root); the fix points to [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) |
 | `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail: own rules that OpenCode never reads and that hide the sibling `AGENTS.md` from Claude Code; warn: nested `CLAUDE.local.md` |
 | `AM10` | nested budgets | `AM05`/`AM06` on every nested instruction file and `.claude/rules` file |
 | `AM11` | `.claude/rules` parity | warn: rules files that `opencode.json` `instructions` does not list |

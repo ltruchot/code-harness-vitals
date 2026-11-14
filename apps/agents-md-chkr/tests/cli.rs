@@ -189,7 +189,12 @@ fn handoff_and_kaizen_warn_when_missing() {
         .assert()
         .code(0)
         .stdout(contains("[warn] AM07 AGENTS.md: names no TODO.md handoff"))
-        .stdout(contains("[pass] AM08 .opencode/skills/kaizen/SKILL.md"));
+        .stdout(contains(
+            "[warn] AM08 .opencode/skills/kaizen/SKILL.md: kaizen skill outside .claude/skills",
+        ))
+        .stdout(contains(
+            "ln -s ../../.opencode/skills/kaizen .claude/skills/kaizen",
+        ));
     let bare = tempfile::tempdir().unwrap();
     write(bare.path(), "AGENTS.md", HANDOFF);
     chkr()

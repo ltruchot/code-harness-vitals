@@ -119,7 +119,7 @@ different rules with nothing in the repository to show it.
 | `AM05` | line budget | warn above 200 lines (the Claude Code memory docs target), fail above 500 |
 | `AM06` | char budget | fail above 40,000 chars, the per-file limit Claude Code applies to instruction files loaded on demand (200K context window) |
 | `AM07` | resume after `/clear` or a compaction | warn unless the first 10 lines name `TODO.md` and `TODO.md` exists |
-| `AM08` | continuous improvement | warn unless a `kaizen` skill exists under `.claude/skills/`, `.opencode/skills/`, or `.agents/skills/`; the fix suggests qol-mini |
+| `AM08` | continuous improvement | warn unless a `kaizen` skill exists in `.claude/skills/`, the only skill root both agents read (Claude Code never reads `.agents/skills/` or `.opencode/skills/`); the fix suggests qol-mini, or a symbolic link into `.claude/skills/` |
 | `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail for each one with its own rules (OpenCode never reads it; Claude Code skips the sibling `AGENTS.md`); warn for a nested `CLAUDE.local.md`; bridges and links pass |
 | `AM10` | nested budgets | `AM05`/`AM06` budgets applied to every nested instruction file and every `.claude/rules` file |
 | `AM11` | `.claude/rules` parity | warn when rules files exist and `opencode.json[c]` does not list `.claude/rules` |

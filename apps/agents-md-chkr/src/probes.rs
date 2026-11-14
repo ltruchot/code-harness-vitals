@@ -264,24 +264,40 @@ fn handoff(snapshot: &Snapshot) -> Finding {
     ))
 }
 
-/// `AM08`: a continuous-improvement (kaizen) skill turns session friction into rule edits.
+/// The only skill root both agents read: Claude Code loads project skills from
+/// `.claude/skills/` alone (skills docs, "Where skills live"); `OpenCode` reads it too.
+const SHARED_SKILLS: &str = ".claude/skills";
+
+/// `AM08`: a continuous-improvement (kaizen) skill, where both agents load it, turns session
+/// friction into rule edits.
 fn kaizen(snapshot: &Snapshot) -> Finding {
-    snapshot.kaizen_skill.as_deref().map_or_else(
-        || {
-            Finding::new(
-                "AM08",
-                Verdict::Warn,
-                ".claude/skills",
-                "no kaizen skill in .claude/skills, .opencode/skills, or .agents/skills: \
-                 nothing turns session friction into rule edits",
-            )
-            .with_fix(format!(
-                "`qol-mini skills install kaizen <repo>` ({QOL_MINI}); the agents-md-review \
-                 skill also recognizes an equivalent under another name"
-            ))
-        },
-        |path| Finding::new("AM08", Verdict::Pass, path, "kaizen skill present"),
+    let Some(path) = snapshot.kaizen_skill.as_deref() else {
+        return Finding::new(
+            "AM08",
+            Verdict::Warn,
+            SHARED_SKILLS,
+            "no kaizen skill in .claude/skills, .opencode/skills, or .agents/skills: \
+             nothing turns session friction into rule edits",
+        )
+        .with_fix(format!(
+            "`qol-mini skills install kaizen <repo>` ({QOL_MINI}); the agents-md-review \
+             skill also recognizes an equivalent under another name"
+        ));
+    };
+    if path.starts_with(SHARED_SKILLS) {
+        return Finding::new("AM08", Verdict::Pass, path, "kaizen skill present");
+    }
+    let dir = path.parent().unwrap_or(path).display().to_string();
+    Finding::new(
+        "AM08",
+        Verdict::Warn,
+        path,
+        "kaizen skill outside .claude/skills: OpenCode loads it, Claude Code never does",
     )
+    .with_fix(format!(
+        "move it to .claude/skills/kaizen, or link it there: \
+         `ln -s ../../{dir} .claude/skills/kaizen`"
+    ))
 }
 
 #[cfg(test)]
@@ -472,6 +488,29 @@ mod tests {
             ..healthy()
         };
         assert_eq!(verdict(&unnamed, "AM07"), Verdict::Warn);
+    }
+
+    #[test]
+    fn a_kaizen_skill_outside_claude_skills_warns_with_a_link_fix() {
+        let snapshot = Snapshot {
+            kaizen_skill: Some(PathBuf::from(".agents/skills/kaizen/SKILL.md")),
+            ..healthy()
+        };
+        let report = check(&snapshot);
+        let kaizen = report
+            .findings()
+            .iter()
+            .find(|f| f.probe() == "AM08")
+            .unwrap();
+        assert_eq!(kaizen.verdict(), Verdict::Warn);
+        assert!(kaizen.message().contains("Claude Code never does"));
+        assert_eq!(
+            kaizen.fix(),
+            Some(
+                "move it to .claude/skills/kaizen, or link it there: \
+                 `ln -s ../../.agents/skills/kaizen .claude/skills/kaizen`"
+            )
+        );
     }
 
     #[test]
