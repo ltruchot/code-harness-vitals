@@ -9,7 +9,8 @@ code-harness-vitals audits whether a repository is ready for agentic coding with
 Claude Code and OpenCode: instruction files, skills, codebase memory, context limiting,
 deterministic gates, and agent-config security. Product intent and scope live in
 `docs/architecture_decision_records/2026-11-13-adr1-main-intent.md`; read it before
-proposing features.
+proposing features. Every check is a gate (ADR 4): deterministic Rust probes set the exit
+code and the score; an advisory review skill judges content. Read ADR 4 before adding one.
 
 ## Language (MANDATORY)
 
@@ -38,9 +39,11 @@ proposing features.
 
 - `mise.toml`: the only place for language and tool versions (Rust, cargo tools). Never
   add `rust-toolchain.toml`, `.tool-versions`, or `cargo install` steps.
-- Cargo workspace: products in `pkg/<name>/`, automation in `xtask/`. Lints, versions,
-  and package metadata are inherited from the root `Cargo.toml`.
-- `pkg/dummy/`: toolchain smoke test (counts files, lines, chars); not a product.
+- Cargo workspace: binaries in `apps/<name>/`, libraries in `pkg/<name>/`, automation in
+  `xtask/`. Lints, versions, and package metadata are inherited from the root `Cargo.toml`.
+- `apps/<gate>-chkr/`: one gate, its probes, and its review skill in
+  `skills/<gate>-review/`. `pkg/vitals-utils/`: code that two or more gates need.
+- `apps/dummy/`: toolchain smoke test (counts files, lines, chars); not a product.
 - `README.md`: pitch, pillars, status, related projects.
 - `docs/architecture_decision_records/`: one ADR per decision,
   named `YYYY-MM-DD-adrN-kebab-slug.md`.
@@ -55,6 +58,9 @@ proposing features.
   `allow`. Do not relax `Cargo.toml` or `clippy.toml` to make a gate pass.
 - Test modules carry `#[cfg_attr(coverage_nightly, coverage(off))]`; integration test
   files start with `#![cfg(test)]`.
+- Before writing a function or adding a crate, search `pkg/vitals-utils/` and the
+  crate's own modules for one that exists. A helper that a second gate needs moves to
+  `vitals-utils`.
 - New crate or version bump: meet the ADR 3 admission criteria and pin `=x.y.z` in
   `[workspace.dependencies]`. Never weaken the 3-day Cargo cooldown in
   `.cargo/config.toml`; official stable toolchains are exempt, nightlies stay date-pinned.
@@ -77,6 +83,7 @@ proposing features.
 
 ## Commands
 
+- `cargo agents-md-chkr [PATH]`: run the `agents-md` gate (exit 0 pass, 1 fail, 2 error).
 - `cargo dummy [PATH] [--all]`: run the dummy app (default: current directory).
 - `cargo test`: every unit, property, integration, and doc test on stable.
 - `cargo xtask check`: every gate (fmt, clippy `-D warnings`, test, doc, cargo-deny,

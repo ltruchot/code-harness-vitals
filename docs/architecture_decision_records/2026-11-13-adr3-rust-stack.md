@@ -3,7 +3,7 @@
 **Date**: 2026-11-13
 **Status**: Accepted
 **Context**: Resolves the "Stack" open question of ADR 1. Proven end to end on
-`pkg/dummy`, a file/line/char counter that exercises every gate.
+`apps/dummy`, a file/line/char counter that exercises every gate.
 
 ## Implementation Status
 
@@ -38,12 +38,14 @@ will enforce on others. Requirements:
 
 ### Workspace
 
-- A plain Cargo workspace: `members = ["pkg/*", "xtask"]`, `resolver = "3"`
+- A plain Cargo workspace: `members = ["apps/*", "pkg/*", "xtask"]`, `resolver = "3"`
   (MSRV-aware), shared `[workspace.package]`, `[workspace.dependencies]`, and
   `[workspace.lints]` inherited by every crate with `lints.workspace = true`.
-- Products live in `pkg/<name>/`. Automation lives in `xtask/` (the cargo-xtask pattern:
-  plain Rust, no extra binary). Aliases in `.cargo/config.toml`: `cargo dummy`,
-  `cargo xtask`.
+- Binaries live in `apps/<name>/` (one per gate, ADR 4), libraries in `pkg/<name>/`
+  (`pkg/vitals-utils`, shared by the gates), automation in `xtask/` (the cargo-xtask
+  pattern: plain Rust, no extra binary). Workspace crates are path entries in
+  `[workspace.dependencies]`. Aliases in `.cargo/config.toml`: `cargo dummy`,
+  `cargo agents-md-chkr`, `cargo xtask`.
 - `Cargo.lock` is committed; every gate runs with `--locked`.
 
 ### Toolchain
@@ -127,7 +129,7 @@ patterns.
   - `allow_attributes` forces `expect` over `allow`, so a stale exemption fails the build.
 - `disallowed-types` bans `Cell`, `RefCell`, `Mutex`, and `RwLock`: state flows through
   values, not shared cells.
-- Data types are values. In `pkg/dummy`, `Counts` is a monoid (`Default` identity,
+- Data types are values. In `apps/dummy`, `Counts` is a monoid (`Default` identity,
   associative saturating `Add`, `Sum`), so per-file results fold in any order or grouping.
 
 ### Lint and complexity policy
@@ -194,6 +196,7 @@ patterns.
 | Command                      | What it does                                                                 |
 | ---------------------------- | ---------------------------------------------------------------------------- |
 | `cargo dummy [PATH] [--all]` | Runs the dummy app (default: current directory, project files only)          |
+| `cargo agents-md-chkr [PATH]`| Runs the `agents-md` gate's probes (ADR 4); exit 0 / 1 (a fail) / 2 (error)  |
 | `cargo test`                 | Runs every unit, property, integration, and doc test on stable              |
 | `cargo xtask cov`            | Branch coverage on the pinned nightly, reports, and the 90% gate             |
 | `cargo xtask check`          | fmt → clippy → test → doc → cargo-deny → coverage gate; stops at first fail |
@@ -280,6 +283,10 @@ adding a review step.
   that pipeline is outside what a cooldown can catch.
 
 ## Supersedes
+
+**Products in `pkg/<name>/`** (2026-11-13 → 2026-11-14): every crate, binary or library,
+lived in `pkg/`. Dropped because the gate model (ADR 4) ships one binary per gate plus
+shared libraries, and the two kinds need separate homes.
 
 **Grace period on toolchains** (2026-11-13, same day): the toolchain was pinned to the
 newest stable at least 3 days old (1.99.1, holding back 1.100.0), and rustup

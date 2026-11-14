@@ -2,7 +2,8 @@
 
 **Date**: 2026-11-13
 **Status**: Accepted (living document — the product compass)
-**Context**: Greenfield project. Competitive landscape in ADR 2; stack in ADR 3.
+**Context**: Greenfield project. Competitive landscape in ADR 2; stack in ADR 3; gate
+model in ADR 4.
 
 ## Implementation Status
 
@@ -12,8 +13,10 @@
 | Intent (this ADR)                       | ✅ Done    | `docs/architecture_decision_records/`   |
 | Competitor analysis                     | ✅ Done    | `2026-11-13-adr2-competitors.md`        |
 | Stack choice (Rust, Cargo workspace)    | ✅ Done    | `2026-11-13-adr3-rust-stack.md`         |
-| Toolchain and gates on a dummy app      | ✅ Done    | `pkg/dummy/`, `xtask/`                  |
-| Check engine and pillar checks          | ⏳ Planned | -                                       |
+| Toolchain and gates on a dummy app      | ✅ Done    | `apps/dummy/`, `xtask/`                 |
+| Gate model (probes + agent review)      | ✅ Done    | `2026-11-14-adr4-gate-model.md`         |
+| Pillar 1: `agents-md` gate              | ✅ Done    | `apps/agents-md-chkr/`                  |
+| Gates for pillars 2–6                   | ⏳ Planned | -                                       |
 | CLI, JSON/SARIF output, CI action       | ⏳ Planned | -                                       |
 
 ---
@@ -45,13 +48,15 @@ that no auditor treats OpenCode on par with Claude Code.
 
 ## Decision
 
-**Build a deterministic-first auditor that scores a repository's agentic coding harness
-across six pillars, with equal support for Claude Code and OpenCode.**
+**Build an auditor that gates a repository's agentic coding harness across six pillars,
+with equal support for Claude Code and OpenCode: deterministic probes in Rust set the
+score and the exit code, and agent-run reviews judge what only reading can (ADR 4).**
 
 ### The six pillars
 
-Each pillar is a set of checks. A check reports pass, warn, fail, or not-applicable, with
-the evidence path and a concrete fix.
+Each pillar is a set of gates (ADR 4). A probe reports pass, warn, fail, or
+not-applicable, with the evidence path and a concrete fix; a review skill proposes
+advisory edits.
 
 1. **Instruction files**
    - Presence: `AGENTS.md` at the root (read natively by OpenCode and by Claude Code when
@@ -92,9 +97,11 @@ the evidence path and a concrete fix.
 
 ### Principles
 
-- **Deterministic first.** Every scored check is a pure function of files on disk and
-  local command output: same input, same score. LLM-based analysis, if ever added, is
-  opt-in, clearly labeled, and never part of the score.
+- **Deterministic score, agent-assisted review.** Every scored probe is a pure function
+  of files on disk and local command output: same input, same score. Content that needs
+  judgment (what is missing, what belongs in a skill) is reviewed by a skill that runs in
+  the user's own agent session, labeled advisory, and never part of the score or the
+  exit code (ADR 4).
 - **Claude Code and OpenCode parity.** Every check that reads Claude Code configuration
   has an OpenCode counterpart (`opencode.json[c]`, `.opencode/`, OpenCode plugins). A
   check that cannot be mirrored is documented as such.
@@ -137,8 +144,9 @@ the evidence path and a concrete fix.
 
 ## Alternatives Rejected
 
-**NO LLM-scored audit**: We reject because scores must be reproducible in CI and free to
-run; an LLM verdict varies between runs and requires an API key.
+**NO LLM in the score or the exit code**: We reject because scores must be reproducible
+in CI and free to run; an LLM verdict varies between runs. Agent review is advisory and
+runs in the user's own session (ADR 4).
 
 **NO Claude-Code-only auditor**: We reject because the target is any agent that reads
 `AGENTS.md`; every existing auditor is Claude- or Cursor-centric, which is the gap.
@@ -163,6 +171,14 @@ checks (harness-score). See ADR 2.
 - Two agents and two scopes double the configuration surface to parse and test.
 - Integrating external scanners adds optional runtime dependencies.
 
+## Supersedes
+
+**LLM analysis as an optional future add-on** (2026-11-13 → 2026-11-14): the auditor
+was deterministic only, with LLM analysis "if ever added", opt-in and outside the score.
+Dropped because the content quality of instruction files — what to move into a skill,
+what every session lacks — cannot be judged by a pure function, and those are the most
+useful findings. The score stays deterministic; review became part of each gate.
+
 ## References
 
 - [Claude Code — How Claude remembers your project](https://code.claude.com/docs/en/memory)
@@ -172,3 +188,4 @@ checks (harness-score). See ADR 2.
 - [OpenSSF Scorecard checks](https://github.com/ossf/scorecard/blob/main/docs/checks.md)
   — scoring model reference.
 - ADR 2: `2026-11-13-adr2-competitors.md` — competitors, detection markers, positioning.
+- ADR 4: `2026-11-14-adr4-gate-model.md` — gate anatomy, review contract, gate catalog.

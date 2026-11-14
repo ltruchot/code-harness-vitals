@@ -2,11 +2,22 @@
 
 **Is your repository ready for coding agents?** code-harness-vitals audits the harness
 that Claude Code and OpenCode work inside — instructions, skills, memory, context budget,
-deterministic gates, and agent-config security — and scores it, deterministically.
+deterministic gates, and agent-config security — so that either agent works in it with
+nothing missing.
 
-> **Status: pre-alpha.** Design documents and a Rust workspace whose gates are proven on a
-> placeholder app; no audit checks yet. See the
-> [intent ADR](docs/architecture_decision_records/2026-11-13-adr1-main-intent.md).
+Every check is a **gate** with two parts:
+
+- **Deterministic probes, in Rust.** Pure functions of the files on disk: presence,
+  layout, budgets, markers. Same input, same verdict. They alone set the exit code and the
+  score, so the gate is safe to run in CI.
+- **An agent review, as a skill.** Where content needs judgment — what is missing, what
+  belongs in a skill, what is noise — a skill runs in your own Claude Code or OpenCode
+  session. It runs the probes first, then proposes at most five `ADD` / `CUT` / `MOVE` /
+  `REWORD` edits, labeled advisory. Nothing is edited without your yes.
+
+> **Status: pre-alpha.** One gate (`agents-md`) is implemented; the others are specified.
+> See the [intent ADR](docs/architecture_decision_records/2026-11-13-adr1-main-intent.md)
+> and the [gate model ADR](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md).
 
 ## What it checks
 
@@ -19,9 +30,44 @@ deterministic gates, and agent-config security — and scores it, deterministica
 | 5. Deterministic gates     | Do commit hooks actually run lint, format, type checks, tests, vulnerability and secret scans? Does CI?  |
 | 6. Agent-config security   | Are permission lists tight, MCP servers pinned, auto-approving hooks flagged?                            |
 
-Design principles: deterministic scores (no LLM in the score), Claude Code and OpenCode
-parity, repository and user-scope findings reported separately, Scorecard-style weighting
+Design principles: deterministic score and exit code (agent review is advisory), Claude
+Code and OpenCode parity, repository and user-scope findings reported separately, Scorecard-style weighting
 with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
+
+## Gates
+
+| Gate | Pillar | Deterministic probes (Rust) | Agent review (skill, advisory) | Status |
+| ---- | ------ | --------------------------- | ------------------------------ | ------ |
+| [`agents-md`](apps/agents-md-chkr/) | 1 | `AM01`–`AM08`, below | [`agents-md-review`](apps/agents-md-chkr/skills/agents-md-review/SKILL.md): 16-criterion rubric | ✅ |
+| `skills` | 2 | frontmatter, description length, body budget, referenced files exist | triggerability, overlap, unsafe scripts | ⏳ |
+| `codebase-memory` | 3 | a code-intelligence MCP server or plugin, wired in for both agents | - | ⏳ |
+| `context-limiting` | 4 | an output-capping tool or hook, wired in for both agents | - | ⏳ |
+| `commit-gates` | 5 | an active hook runner calling lint, format, types, tests, vulnerability and secret scans; CI runs the same | fit of the gate list to the stack | ⏳ |
+| `agent-config` | 6 | permission lists, pinned MCP servers, auto-approving hooks | - | ⏳ |
+
+### `agents-md`
+
+```sh
+cargo agents-md-chkr /path/to/repo   # exit 0: no fail · 1: a probe failed · 2: cannot read
+```
+
+| Probe | Checks | Fails or warns when |
+| ----- | ------ | ------------------- |
+| `AM01` | `AGENTS.md` at the root | fail: missing (the fix names a `CLAUDE.md` to rename) |
+| `AM02` | root `CLAUDE.md` | fail: it has its own content, so Claude Code skips `AGENTS.md`; a bridge (`@AGENTS.md`) or a symlink passes |
+| `AM03` | `.claude/CLAUDE.md` | fail: same as `AM02` (bridge: `@../AGENTS.md`) |
+| `AM04` | `CLAUDE.local.md` | warn: present with no bridge, so Claude Code skips `AGENTS.md` on that machine |
+| `AM05` | lines | warn above 200, fail above 500 |
+| `AM06` | chars | fail above 40,000 |
+| `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist |
+| `AM08` | continuous improvement | warn: no `kaizen` skill; the fix points to [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) |
+
+The review skill checks what probes cannot: real commands, conventions, guardrails
+(think before coding, simplicity, surgical changes, verify in a loop), reuse before
+create, ADR discipline, rules hygiene, handoff and kaizen equivalents, and blocks that
+belong in a skill. To use it, copy `apps/agents-md-chkr/skills/agents-md-review/` into
+`.claude/skills/` (Claude Code and OpenCode both read it), then ask your agent to review
+`AGENTS.md`.
 
 ## Develop
 
@@ -32,6 +78,7 @@ Rust workspace; every tool version is pinned in `mise.toml`. Details in
 mise install               # once: Rust, cargo-deny, cargo-llvm-cov
 cargo xtask setup          # once: coverage nightly
 cargo xtask install-hooks  # once: pre-commit runs every gate
+cargo agents-md-chkr       # run the agents-md gate on the current directory
 cargo dummy                # count files, lines, and chars in the current directory
 cargo test                 # run the tests
 cargo xtask check          # every gate: fmt, clippy, tests, docs, cargo-deny, 90% branch coverage
@@ -66,6 +113,7 @@ agent configuration files.
 - [ADR 1 — Main intent](docs/architecture_decision_records/2026-11-13-adr1-main-intent.md)
 - [ADR 2 — Competitors and pillar references](docs/architecture_decision_records/2026-11-13-adr2-competitors.md)
 - [ADR 3 — Rust stack](docs/architecture_decision_records/2026-11-13-adr3-rust-stack.md)
+- [ADR 4 — Gate model](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md)
 
 ## License
 

@@ -1,0 +1,15 @@
+# Rubric sources
+
+Where each criterion of the `agents-md-review` rubric comes from. Every source that is
+written for `CLAUDE.md` applies to `AGENTS.md`: Claude Code 2.1.277 and later reads
+`AGENTS.md` natively, and OpenCode reads it first.
+
+| Source | Criteria | What it contributes |
+|---|---|---|
+| [Claude Code — memory docs](https://code.claude.com/docs/en/memory) | 1, 2, 3, 15, 16; probes `AM02`–`AM06` | target under 200 lines; imports four hops deep; AGENTS.md read only when no `CLAUDE.md`, `.claude/CLAUDE.md`, or `CLAUDE.local.md` exists in the working directory or above it; 40,000-char limit per file loaded on demand |
+| [Claude Code 101 — the CLAUDE.md file](https://academy.claude.com/courses/claude-code-101/the-claude-md-file) | 1, 2, 3 | project summary, commands, code style: the minimal shape |
+| [Using CLAUDE.md files](https://claude.com/resources/articles/using-claude-md-files) | 1, 2, 3, 9, 14, 15, 16 | directory map, guardrails, workflows; no secrets; add instructions in response to real friction, not in advance; split detail into referenced files |
+| [Karpathy-inspired guidelines](https://github.com/multica-ai/andrej-karpathy-skills/blob/main/CLAUDE.md) | 4, 5, 7 | think before coding, simplicity first, surgical changes, goal-driven execution |
+| [AI Hero — plans you actually read](https://www.aihero.dev/my-agents-md-file-for-building-plans-you-actually-read) | 11 | concise plans that end with the unresolved questions |
+| [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) | 12, 13 | `TODO.md` handoff read first, `todo/` per item, a `/kaizen` review before `/compact`; `AGENTS.md` as the single canonical rules file (its ADR 0003) |
+| Field-tested project rules | 6, 7, 8, 9, 10 | reuse before create; small increments with lint and tests; artifact language fixed; ADR index read before architecture; current truth only, no version noise, dated rulings |
