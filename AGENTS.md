@@ -95,7 +95,7 @@ code and the score; an advisory review skill judges content. Read ADR 4 before a
   container e2e, 90% branch coverage). It must pass before every commit; the pre-commit
   hook runs it. It needs a running docker daemon.
 - `cargo xtask e2e`: container end-to-end tests only (`tests/container.rs`).
-- Every gate behavior gets a unit test and an end-to-end test on a real tree
-  (`tests/cli.rs`); behavior that depends on `/` or `$HOME` also gets a container test.
 - `cargo xtask cov`: branch coverage only; writes `lcov.info` and `coverage/html/`.
 - `mise install`, `cargo xtask setup`, then `cargo xtask install-hooks`: once per clone.
+- The shell is zsh: brace a variable before `:` (`"${ref}:path"`, since `:a`, `:h`,
+  `:t` are modifiers) and quote words that start with `=`.
