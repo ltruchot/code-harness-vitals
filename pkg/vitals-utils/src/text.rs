@@ -75,6 +75,28 @@ impl Budget {
         self.fail
     }
 
+    /// `measure` with its unit and the thresholds, as a finding message.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use vitals_utils::Budget;
+    ///
+    /// assert_eq!(Budget::new(200, 500).describe(12, "lines"), "12 lines (warn above 200, fail above 500)");
+    /// assert_eq!(Budget::hard(40).describe(41, "chars"), "41 chars (fail above 40)");
+    /// ```
+    #[must_use]
+    pub fn describe(&self, measure: usize, unit: &str) -> String {
+        if self.warn < self.fail {
+            format!(
+                "{measure} {unit} (warn above {}, fail above {})",
+                self.warn, self.fail
+            )
+        } else {
+            format!("{measure} {unit} (fail above {})", self.fail)
+        }
+    }
+
     /// The verdict for `measure`.
     ///
     /// # Examples

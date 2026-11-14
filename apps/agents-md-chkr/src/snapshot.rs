@@ -4,20 +4,9 @@
 use std::path::{Path, PathBuf};
 
 use vitals_utils::markers::{AGENTS_MD, skill_files};
-use vitals_utils::{Error, fs};
+use vitals_utils::{Error, Reach, fs};
 
 use crate::cascade::{ANCESTOR_FILES, classify, is_root_file};
-
-/// How far a run looks.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum Reach {
-    /// The repository and the user scope: every parent directory up to the filesystem
-    /// root, and the home directory.
-    #[default]
-    WithUserScope,
-    /// The repository only, for reproducible CI runs.
-    RepositoryOnly,
-}
 
 /// An instruction file: its content and, when it is a symbolic link, its target as written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -56,7 +45,7 @@ pub(crate) struct Snapshot {
 
 pub(crate) fn read(root: &Path, reach: Reach) -> Result<Snapshot, Error> {
     fs::require_dir(root)?;
-    let user = reach == Reach::WithUserScope;
+    let user = reach.includes_user_scope();
     Ok(Snapshot {
         agents_md: fs::read_optional(&root.join(AGENTS_MD))?,
         claude_md: rules_file(&root.join("CLAUDE.md"))?,
@@ -119,9 +108,8 @@ fn opencode_config(root: &Path) -> Result<Option<String>, Error> {
 }
 
 fn ancestors(root: &Path) -> Result<Vec<Entry>, Error> {
-    let root = fs::canonical(root)?;
-    root.ancestors()
-        .skip(1)
+    fs::parent_dirs(root)?
+        .into_iter()
         .flat_map(|dir| ANCESTOR_FILES.iter().map(move |name| dir.join(name)))
         .map(|path| entry(path.clone(), &path))
         .filter_map(Result::transpose)

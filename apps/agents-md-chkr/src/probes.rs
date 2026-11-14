@@ -187,16 +187,7 @@ fn local_file(snapshot: &Snapshot) -> Finding {
 
 fn budget(probe: &'static str, measure: usize, unit: &str, limit: Budget) -> Finding {
     let verdict = limit.verdict(measure);
-    let message = if limit.warn() < limit.fail() {
-        format!(
-            "{measure} {unit} (warn above {}, fail above {})",
-            limit.warn(),
-            limit.fail()
-        )
-    } else {
-        format!("{measure} {unit} (fail above {})", limit.fail())
-    };
-    let finding = Finding::new(probe, verdict, AGENTS_MD, message);
+    let finding = Finding::new(probe, verdict, AGENTS_MD, limit.describe(measure, unit));
     if verdict > Verdict::Pass {
         finding.with_fix(
             "keep what every session needs; move workflow-specific sections into skills and \
@@ -276,8 +267,8 @@ fn kaizen(snapshot: &Snapshot) -> Finding {
             "AM08",
             Verdict::Warn,
             SHARED_SKILLS,
-            "no kaizen skill in .claude/skills, .opencode/skills, or .agents/skills: \
-             nothing turns session friction into rule edits",
+            "no kaizen skill in any skill root (.claude/skills, .agents/skills, \
+             .opencode/skill, .opencode/skills): nothing turns session friction into rule edits",
         )
         .with_fix(format!(
             "`qol-mini skills install kaizen <repo>` ({QOL_MINI}); the agents-md-review \

@@ -43,6 +43,34 @@ pub fn read_optional(path: &Path) -> Result<Option<String>, Error> {
     }
 }
 
+/// Whether anything is at `path`: a file, a directory, or a symbolic link whose target
+/// exists. A dangling link counts as nothing.
+///
+/// # Errors
+///
+/// [`Error::Read`] when `path` cannot be inspected.
+pub fn exists(path: &Path) -> Result<bool, Error> {
+    match std::fs::metadata(path) {
+        Ok(_) => Ok(true),
+        Err(source) if source.kind() == ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(read_error(path, source)),
+    }
+}
+
+/// Every directory above `root`, nearest first, up to the filesystem root: `root` is made
+/// absolute and its symbolic links resolved first.
+///
+/// # Errors
+///
+/// [`Error::Read`] when `root` does not exist or cannot be resolved.
+pub fn parent_dirs(root: &Path) -> Result<Vec<PathBuf>, Error> {
+    Ok(canonical(root)?
+        .ancestors()
+        .skip(1)
+        .map(Path::to_path_buf)
+        .collect())
+}
+
 /// The target of `path` when it is a symbolic link, as written in the link; `None` when it
 /// is not a link or does not exist.
 ///
@@ -123,7 +151,10 @@ fn read_error(path: &Path, source: std::io::Error) -> Error {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{canonical, home_dir, link_target, project_files, read_optional, require_dir};
+    use super::{
+        canonical, exists, home_dir, link_target, parent_dirs, project_files, read_optional,
+        require_dir,
+    };
     use crate::error::Error;
     use std::fs;
 
@@ -253,5 +284,42 @@ mod tests {
         );
         // Dangling: the target does not exist, so there is no content.
         assert_eq!(read_optional(&link).unwrap(), None);
+    }
+
+    #[test]
+    fn exists_sees_files_and_directories_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("SKILL.md");
+        fs::write(&file, "x").unwrap();
+        assert!(exists(&file).unwrap());
+        assert!(exists(dir.path()).unwrap());
+        assert!(!exists(&dir.path().join("missing")).unwrap());
+        assert!(matches!(
+            exists(&file.join("child")),
+            Err(Error::Read { .. })
+        ));
+    }
+
+    #[test]
+    fn parent_dirs_climb_to_the_filesystem_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("work/repo");
+        fs::create_dir_all(&repo).unwrap();
+        let parents = parent_dirs(&repo).unwrap();
+        assert_eq!(parents[0], canonical(&dir.path().join("work")).unwrap());
+        assert_eq!(parents.last().unwrap(), std::path::Path::new("/"));
+        assert!(matches!(
+            parent_dirs(&dir.path().join("missing")),
+            Err(Error::Read { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exists_treats_a_dangling_link_as_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("skill");
+        std::os::unix::fs::symlink("missing", &link).unwrap();
+        assert!(!exists(&link).unwrap());
     }
 }
