@@ -4,14 +4,20 @@
 /// Pinned to a dated build: nightlies skip the beta and pre-release soak (ADR 3).
 pub(crate) const NIGHTLY: &str = "nightly-2026-11-09";
 
+/// Target of the static binary that the container end-to-end tests run on an empty root.
+/// Installed from `mise.toml`; `tests/container.rs` reads the binary from its release dir.
+pub(crate) const STATIC_TARGET: &str = "x86_64-unknown-linux-musl";
+
 /// Minimum branch coverage, in percent, for the coverage gate.
 pub(crate) const MIN_BRANCH_COVERAGE: f64 = 90.0;
 
 /// A task the user can run as `cargo xtask <task>`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Task {
-    /// Every gate: format, lints, tests, docs, supply chain, branch coverage.
+    /// Every gate: format, lints, tests, docs, supply chain, container tests, branch coverage.
     Check,
+    /// End-to-end tests in containers whose filesystem root holds the fixtures (needs docker).
+    E2e,
     /// Branch coverage with reports (`lcov.info`, `coverage/html`) and the gate.
     Coverage,
     /// Install the coverage nightly. Every other tool comes from `mise.toml`.
@@ -80,7 +86,8 @@ impl Step {
 /// The commands `task` runs, in order. Execution stops at the first failure.
 pub(crate) fn steps(task: Task) -> Vec<Step> {
     match task {
-        Task::Check => [static_gates(), coverage()].concat(),
+        Task::Check => [static_gates(), e2e(), coverage()].concat(),
+        Task::E2e => e2e(),
         Task::Coverage => coverage(),
         Task::Setup => vec![nightly_toolchain()],
         Task::InstallHooks => vec![Step::new("git", &["config", "core.hooksPath", ".githooks"])],
@@ -103,6 +110,30 @@ fn static_gates() -> Vec<Step> {
         Step::cargo(&["doc", "--workspace", "--no-deps", "--locked"])
             .with_env("RUSTDOCFLAGS", "-D warnings"),
         Step::cargo(&["deny", "check"]),
+    ]
+}
+
+fn e2e() -> Vec<Step> {
+    vec![
+        Step::cargo(&[
+            "build",
+            "--release",
+            "--locked",
+            "--target",
+            STATIC_TARGET,
+            "-p",
+            "agents-md-chkr",
+        ]),
+        Step::cargo(&[
+            "test",
+            "--locked",
+            "-p",
+            "agents-md-chkr",
+            "--test",
+            "container",
+            "--",
+            "--ignored",
+        ]),
     ]
 }
 
@@ -156,7 +187,7 @@ fn nightly_toolchain() -> Step {
 
 #[cfg(test)]
 mod tests {
-    use super::{Expect, NIGHTLY, Step, Task, steps};
+    use super::{Expect, NIGHTLY, STATIC_TARGET, Step, Task, steps};
 
     fn command_lines(task: Task) -> Vec<String> {
         steps(task)
@@ -174,7 +205,21 @@ mod tests {
         );
         assert!(lines.iter().any(|line| line.ends_with("-- -D warnings")));
         assert!(lines.iter().any(|line| line == "cargo deny check"));
-        assert_eq!(lines.len(), 11);
+        assert_eq!(lines.len(), 13);
+    }
+
+    #[test]
+    fn e2e_builds_the_static_binary_then_runs_the_ignored_container_tests() {
+        let lines = command_lines(Task::E2e);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(&format!("--target {STATIC_TARGET}")));
+        assert!(lines[1].ends_with("--test container -- --ignored"));
+        let check = command_lines(Task::Check);
+        let deny = check
+            .iter()
+            .position(|line| line == "cargo deny check")
+            .unwrap();
+        assert_eq!(check[deny + 1], lines[0]);
     }
 
     #[test]

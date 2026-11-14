@@ -51,7 +51,9 @@ will enforce on others. Requirements:
 ### Toolchain
 
 - `mise.toml` is the single source of tool versions: Rust (latest stable, **1.100.0**,
-  profile `minimal` with `clippy` and `rustfmt`), `cargo-deny`, and `cargo-llvm-cov`.
+  profile `minimal` with `clippy` and `rustfmt`, plus the `x86_64-unknown-linux-musl`
+  target for the static binary of the container tests), `cargo-deny`, and
+  `cargo-llvm-cov`.
   `mise install` installs them all; locally and in CI (`jdx/mise-action`).
 - No `rust-toolchain.toml`: mise exports `RUSTUP_TOOLCHAIN`, which rustup ranks above
   that file, so a second version source drifts silently.
@@ -161,6 +163,10 @@ patterns.
 - Unit tests sit next to the code. `proptest` checks algebraic laws: monoid identity,
   associativity, and additivity across newline splits. `assert_cmd` drives the real
   binary against `tempfile` trees.
+- Container end-to-end tests (`tests/container.rs`, `#[ignore]` for plain `cargo test`)
+  cover what a temporary directory cannot: files at the filesystem root and in a real
+  `$HOME`. `cargo xtask e2e` builds the static musl binary, then runs them in `FROM
+  scratch` images with no network (ADR 4, "Tests"). They need docker.
 - Gate: at least **90% branch coverage** per run.
   - `cargo-llvm-cov` 0.9.1 provides branch coverage on nightly only (`--branch`) and has
     no `--fail-under-branches`.
@@ -199,7 +205,8 @@ patterns.
 | `cargo agents-md-chkr [PATH]`| Runs the `agents-md` gate's probes (ADR 4); exit 0 / 1 (a fail) / 2 (error)  |
 | `cargo test`                 | Runs every unit, property, integration, and doc test on stable              |
 | `cargo xtask cov`            | Branch coverage on the pinned nightly, reports, and the 90% gate             |
-| `cargo xtask check`          | fmt → clippy → test → doc → cargo-deny → coverage gate; stops at first fail |
+| `cargo xtask e2e`            | Static binary, then the container end-to-end tests (needs docker)            |
+| `cargo xtask check`          | fmt → clippy → test → doc → cargo-deny → e2e → coverage; stops at first fail |
 | `mise install`               | Installs Rust, cargo-deny, and cargo-llvm-cov from `mise.toml`              |
 | `cargo xtask setup`          | Installs the coverage nightly (the only toolchain outside `mise.toml`)      |
 | `cargo xtask install-hooks`  | Points git at `.githooks/` (pre-commit runs `cargo xtask check`)             |
@@ -279,6 +286,8 @@ adding a review step.
   tests.
 - Contributors need mise installed; plain rustup alone does not pick the pinned
   version.
+- `cargo xtask check`, and so the pre-commit hook, needs a running docker daemon for the
+  container tests.
 - The toolchain exemption trusts the Rust project's release process; a compromise of
   that pipeline is outside what a cooldown can catch.
 

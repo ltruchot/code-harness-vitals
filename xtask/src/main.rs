@@ -26,8 +26,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Cmd {
-    /// Run every gate: fmt, clippy, tests, docs, cargo-deny, branch coverage.
+    /// Run every gate: fmt, clippy, tests, docs, cargo-deny, container tests, branch coverage.
     Check,
+    /// Run the container end-to-end tests (needs docker).
+    E2e,
     /// Measure branch coverage, write `lcov.info` and `coverage/html/`, apply the gate.
     Cov,
     /// Install the coverage nightly (run `mise install` first for everything else).
@@ -40,6 +42,7 @@ impl From<Cmd> for Task {
     fn from(command: Cmd) -> Self {
         match command {
             Cmd::Check => Self::Check,
+            Cmd::E2e => Self::E2e,
             Cmd::Cov => Self::Coverage,
             Cmd::Setup => Self::Setup,
             Cmd::InstallHooks => Self::InstallHooks,

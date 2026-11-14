@@ -4,8 +4,11 @@
     reason = "boundary: filesystem reads for every gate"
 )]
 
+use std::ffi::OsStr;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+
+use ignore::{DirEntry, WalkBuilder};
 
 use crate::error::Error;
 
@@ -57,6 +60,59 @@ pub fn link_target(path: &Path) -> Result<Option<PathBuf>, Error> {
     }
 }
 
+/// `path` made absolute, with every symbolic link resolved.
+///
+/// # Errors
+///
+/// [`Error::Read`] when `path` does not exist or cannot be resolved.
+pub fn canonical(path: &Path) -> Result<PathBuf, Error> {
+    std::fs::canonicalize(path).map_err(|source| read_error(path, source))
+}
+
+/// The current user's home directory, when the platform defines one.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::home_dir()
+}
+
+/// Every file and symbolic link under `root`, relative to it, as an agent working in the
+/// repository sees the tree.
+///
+/// Hidden files are included; `.gitignore` and `.ignore` rules are honored, without the
+/// user's global gitignore so the result does not depend on the machine. `.git/` and
+/// `.claude/worktrees/` (agent worktrees, full copies of the repository) are skipped.
+///
+/// # Errors
+///
+/// [`Error::Walk`] when a directory cannot be read.
+pub fn project_files(root: &Path) -> Result<Vec<PathBuf>, Error> {
+    WalkBuilder::new(root)
+        .hidden(false)
+        .git_global(false)
+        .require_git(false)
+        .filter_entry(|entry| !skipped(entry.path()))
+        .build()
+        .filter_map(|entry| relative_file(root, entry).transpose())
+        .collect()
+}
+
+fn skipped(path: &Path) -> bool {
+    path.file_name() == Some(OsStr::new(".git")) || path.ends_with(".claude/worktrees")
+}
+
+fn relative_file(
+    root: &Path,
+    entry: Result<DirEntry, ignore::Error>,
+) -> Result<Option<PathBuf>, Error> {
+    let entry = entry?;
+    let listed = entry
+        .file_type()
+        .is_some_and(|kind| kind.is_file() || kind.is_symlink());
+    Ok(listed
+        .then(|| entry.path().strip_prefix(root).ok().map(Path::to_path_buf))
+        .flatten())
+}
+
 fn read_error(path: &Path, source: std::io::Error) -> Error {
     Error::Read {
         path: path.to_path_buf(),
@@ -67,7 +123,7 @@ fn read_error(path: &Path, source: std::io::Error) -> Error {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{link_target, read_optional, require_dir};
+    use super::{canonical, home_dir, link_target, project_files, read_optional, require_dir};
     use crate::error::Error;
     use std::fs;
 
@@ -109,6 +165,80 @@ mod tests {
             link_target(&file.join("child")),
             Err(Error::Read { .. })
         ));
+    }
+
+    fn tree(paths: &[&str]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for relative in paths {
+            let path = dir.path().join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, "x").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn project_files_lists_hidden_files_and_honors_ignore_rules() {
+        let dir = tree(&[
+            "AGENTS.md",
+            ".claude/rules/a.md",
+            "pkg/AGENTS.md",
+            ".gitignore",
+            "build/AGENTS.md",
+            ".git/AGENTS.md",
+            ".claude/worktrees/wt/AGENTS.md",
+        ]);
+        fs::write(dir.path().join(".gitignore"), "build/\n").unwrap();
+        let mut files = project_files(dir.path()).unwrap();
+        files.sort();
+        let expected: Vec<std::path::PathBuf> = [
+            ".claude/rules/a.md",
+            ".gitignore",
+            "AGENTS.md",
+            "pkg/AGENTS.md",
+        ]
+        .iter()
+        .map(Into::into)
+        .collect();
+        assert_eq!(files, expected);
+    }
+
+    #[test]
+    fn project_files_of_a_missing_root_is_a_walk_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            project_files(&dir.path().join("missing")),
+            Err(Error::Walk(_))
+        ));
+    }
+
+    #[test]
+    fn canonical_resolves_existing_paths_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let resolved = canonical(&dir.path().join(".")).unwrap();
+        assert!(resolved.is_absolute());
+        assert!(matches!(
+            canonical(&dir.path().join("missing")),
+            Err(Error::Read { .. })
+        ));
+    }
+
+    #[test]
+    fn home_dir_is_absolute_when_defined() {
+        assert!(home_dir().is_none_or(|home| home.is_absolute()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_files_lists_symbolic_links() {
+        let dir = tree(&["AGENTS.md"]);
+        std::os::unix::fs::symlink("AGENTS.md", dir.path().join("CLAUDE.md")).unwrap();
+        let mut files = project_files(dir.path()).unwrap();
+        files.sort();
+        assert_eq!(
+            files,
+            [std::path::PathBuf::from("AGENTS.md"), "CLAUDE.md".into()]
+        );
     }
 
     #[cfg(unix)]

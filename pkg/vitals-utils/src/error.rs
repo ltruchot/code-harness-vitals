@@ -14,6 +14,9 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+    /// The repository tree could not be walked.
+    #[error("cannot walk the repository")]
+    Walk(#[from] ignore::Error),
     /// The repository root is not a directory.
     #[error("{} is not a directory", path.display())]
     NotADirectory {

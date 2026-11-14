@@ -28,12 +28,24 @@ impl fmt::Display for Verdict {
     }
 }
 
+/// Where a finding's evidence lives (ADR 1, "Two scopes").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Scope {
+    /// Inside the repository: reproducible, and the only scope that sets the exit status.
+    #[default]
+    Repository,
+    /// On this machine, outside the repository (parent directories, the home directory):
+    /// reported, never part of the exit status.
+    User,
+}
+
 /// One probe's conclusion: its stable id, the verdict, the file it is about, and the fix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[must_use]
 pub struct Finding {
     probe: &'static str,
     verdict: Verdict,
+    scope: Scope,
     evidence: PathBuf,
     message: String,
     fix: Option<String>,
@@ -50,6 +62,7 @@ impl Finding {
         Self {
             probe,
             verdict,
+            scope: Scope::Repository,
             evidence: evidence.into(),
             message: message.into(),
             fix: None,
@@ -62,6 +75,20 @@ impl Finding {
             fix: Some(fix.into()),
             ..self
         }
+    }
+
+    /// The same finding, about a file outside the repository.
+    pub fn in_user_scope(self) -> Self {
+        Self {
+            scope: Scope::User,
+            ..self
+        }
+    }
+
+    /// Where the evidence lives.
+    #[must_use]
+    pub const fn scope(&self) -> Scope {
+        self.scope
     }
 
     /// Stable probe id, such as `AM01`.
@@ -97,9 +124,13 @@ impl Finding {
 
 impl fmt::Display for Finding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let scope = match self.scope {
+            Scope::Repository => "",
+            Scope::User => " (user scope)",
+        };
         write!(
             f,
-            "[{}] {} {}: {}",
+            "[{}] {}{scope} {}: {}",
             self.verdict,
             self.probe,
             self.evidence.display(),
@@ -186,10 +217,14 @@ impl Report {
             .unwrap_or(Verdict::NotApplicable)
     }
 
-    /// [`Outcome::Failed`] when a probe failed, [`Outcome::Passed`] otherwise.
+    /// [`Outcome::Failed`] when a repository-scope probe failed, [`Outcome::Passed`]
+    /// otherwise: user-scope findings never change the exit status.
     #[must_use]
     pub fn outcome(&self) -> Outcome {
-        if self.worst() == Verdict::Fail {
+        let failed = self.findings.iter().any(|finding| {
+            finding.scope() == Scope::Repository && finding.verdict() == Verdict::Fail
+        });
+        if failed {
             Outcome::Failed
         } else {
             Outcome::Passed
@@ -228,7 +263,7 @@ impl fmt::Display for Report {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{Finding, Outcome, Report, Verdict};
+    use super::{Finding, Outcome, Report, Scope, Verdict};
 
     fn finding(verdict: Verdict) -> Finding {
         Finding::new("T01", verdict, "AGENTS.md", "observed")
@@ -295,6 +330,20 @@ mod tests {
              [n/a] T01 AGENTS.md: observed\n\
              demo gate failed: 1 fail, 0 warn, 1 pass, 1 n/a"
         );
+    }
+
+    #[test]
+    fn user_scope_is_shown_and_never_fails_the_gate() {
+        let outside = finding(Verdict::Fail).in_user_scope();
+        assert_eq!(outside.scope(), Scope::User);
+        assert_eq!(finding(Verdict::Fail).scope(), Scope::Repository);
+        assert_eq!(
+            outside.to_string(),
+            "[fail] T01 (user scope) AGENTS.md: observed"
+        );
+        let report = Report::new("t", vec![outside]);
+        assert_eq!(report.worst(), Verdict::Fail);
+        assert_eq!(report.outcome(), Outcome::Passed);
     }
 
     #[test]

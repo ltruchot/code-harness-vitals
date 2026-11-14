@@ -5,7 +5,8 @@ use std::path::{Component, Path};
 use vitals_utils::markers::AGENTS_MD;
 use vitals_utils::{Budget, Finding, Report, TextSize, Verdict};
 
-use crate::snapshot::{Shadow, Snapshot};
+use crate::snapshot::{RulesFile, Snapshot};
+use crate::{ancestors, nested};
 
 /// Gate id.
 pub const GATE: &str = "agents-md";
@@ -29,20 +30,20 @@ pub const HANDOFF_WINDOW: usize = 10;
 const QOL_MINI: &str = "https://github.com/ltruchot/qol-mini-4-ai-tui";
 
 /// A file Claude Code reads instead of `AGENTS.md` when it exists.
-struct Location {
+pub(crate) struct Location {
     probe: &'static str,
     path: &'static str,
     /// `AGENTS.md` as seen from the file's directory, for imports and link targets.
-    agents: &'static str,
+    pub(crate) agents: &'static str,
 }
 
-const ROOT_CLAUDE_MD: Location = Location {
+pub(crate) const ROOT_CLAUDE_MD: Location = Location {
     probe: "AM02",
     path: "CLAUDE.md",
     agents: "AGENTS.md",
 };
 
-const DOT_CLAUDE_MD: Location = Location {
+pub(crate) const DOT_CLAUDE_MD: Location = Location {
     probe: "AM03",
     path: ".claude/CLAUDE.md",
     agents: "../AGENTS.md",
@@ -50,7 +51,7 @@ const DOT_CLAUDE_MD: Location = Location {
 
 /// How a shadowing file relates to `AGENTS.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Layout {
+pub(crate) enum Layout {
     Absent,
     Symlink,
     Bridge,
@@ -58,24 +59,30 @@ enum Layout {
 }
 
 impl Layout {
-    const fn loads_agents(self) -> bool {
+    pub(crate) const fn loads_agents(self) -> bool {
         matches!(self, Self::Symlink | Self::Bridge)
     }
 }
 
 pub(crate) fn check(snapshot: &Snapshot) -> Report {
+    let root = vec![
+        presence(snapshot),
+        shadow(&ROOT_CLAUDE_MD, &snapshot.claude_md, snapshot),
+        shadow(&DOT_CLAUDE_MD, &snapshot.dot_claude_md, snapshot),
+        local_file(snapshot),
+        lines(snapshot),
+        chars(snapshot),
+        handoff(snapshot),
+        kaizen(snapshot),
+    ];
     Report::new(
         GATE,
-        vec![
-            presence(snapshot),
-            shadow(&ROOT_CLAUDE_MD, &snapshot.claude_md, snapshot),
-            shadow(&DOT_CLAUDE_MD, &snapshot.dot_claude_md, snapshot),
-            local_file(snapshot),
-            lines(snapshot),
-            chars(snapshot),
-            handoff(snapshot),
-            kaizen(snapshot),
-        ],
+        [
+            root,
+            nested::findings(snapshot),
+            ancestors::findings(snapshot),
+        ]
+        .concat(),
     )
 }
 
@@ -96,7 +103,7 @@ fn presence(snapshot: &Snapshot) -> Finding {
             "AM01",
             Verdict::Fail,
             AGENTS_MD,
-            "no AGENTS.md: the rules live in CLAUDE.md, which OpenCode reads only as a fallback",
+            "no AGENTS.md: the rules live in CLAUDE.md, which OpenCode 2 does not read",
         )
         .with_fix("rename CLAUDE.md to AGENTS.md; Claude Code 2.1.277 and later reads it"),
         (None, None) => Finding::new("AM01", Verdict::Fail, AGENTS_MD, "no AGENTS.md at the root")
@@ -107,7 +114,8 @@ fn presence(snapshot: &Snapshot) -> Finding {
     }
 }
 
-fn layout(file: &Shadow, agents: &str) -> Layout {
+/// How `file` relates to the `AGENTS.md` that `agents` points to from its directory.
+pub(crate) fn layout(file: &RulesFile, agents: &str) -> Layout {
     if let Some(target) = &file.link {
         let same = target
             .components()
@@ -123,7 +131,7 @@ fn layout(file: &Shadow, agents: &str) -> Layout {
 }
 
 /// `AM02`, `AM03`: no `CLAUDE.md` shadows `AGENTS.md`, unless it imports or links to it.
-fn shadow(at: &Location, file: &Shadow, snapshot: &Snapshot) -> Finding {
+fn shadow(at: &Location, file: &RulesFile, snapshot: &Snapshot) -> Finding {
     if snapshot.agents_md.is_none() {
         return not_applicable(at.probe, at.path);
     }
@@ -280,9 +288,9 @@ fn kaizen(snapshot: &Snapshot) -> Finding {
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
     use super::{CHARS, LINES, check};
-    use crate::snapshot::{Shadow, Snapshot};
+    use crate::snapshot::{RulesFile, Snapshot};
     use std::path::PathBuf;
-    use vitals_utils::{Outcome, Verdict};
+    use vitals_utils::{Finding, Outcome, Verdict};
 
     const HANDOFF: &str = "> Session handoff: read `TODO.md` first.\n\n# Rules\n";
 
@@ -295,15 +303,15 @@ mod tests {
         }
     }
 
-    fn content(text: &str) -> Shadow {
-        Shadow {
+    fn content(text: &str) -> RulesFile {
+        RulesFile {
             content: Some(text.to_owned()),
             link: None,
         }
     }
 
-    fn link(target: &str) -> Shadow {
-        Shadow {
+    fn link(target: &str) -> RulesFile {
+        RulesFile {
             content: Some(HANDOFF.to_owned()),
             link: Some(PathBuf::from(target)),
         }
@@ -329,7 +337,9 @@ mod tests {
     #[test]
     fn a_healthy_repository_passes_every_probe() {
         let report = check(&healthy());
-        assert_eq!(report.findings().len(), 8);
+        let probes: Vec<&str> = report.findings().iter().map(Finding::probe).collect();
+        let expected: Vec<String> = (1..=15).map(|n| format!("AM{n:02}")).collect();
+        assert_eq!(probes, expected);
         assert_eq!(report.worst(), Verdict::Pass, "{report}");
     }
 
@@ -437,7 +447,12 @@ mod tests {
         assert_eq!(verdict(&at_limit, "AM06"), Verdict::Pass);
         assert_eq!(verdict(&sized(100, 500), "AM06"), Verdict::Fail);
         let report = check(&sized(100, 500));
-        assert!(report.findings()[5].fix().unwrap().contains("skills"));
+        let chars = report
+            .findings()
+            .iter()
+            .find(|f| f.probe() == "AM06")
+            .unwrap();
+        assert!(chars.fix().unwrap().contains("skills"));
     }
 
     #[test]
@@ -466,7 +481,11 @@ mod tests {
             ..healthy()
         };
         let report = check(&snapshot);
-        let kaizen = report.findings().last().unwrap();
+        let kaizen = report
+            .findings()
+            .iter()
+            .find(|f| f.probe() == "AM08")
+            .unwrap();
         assert_eq!(kaizen.verdict(), Verdict::Warn);
         assert!(
             kaizen

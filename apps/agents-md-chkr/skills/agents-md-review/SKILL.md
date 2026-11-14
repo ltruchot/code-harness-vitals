@@ -1,6 +1,6 @@
 ---
 name: agents-md-review
-description: Review a repository's AGENTS.md (or CLAUDE.md) for Claude Code and OpenCode — run the agents-md-chkr deterministic probes, then judge the content against a rubric and propose at most five advisory ADD, CUT, MOVE, or REWORD edits, one block at a time. Use when asked to audit, review, grade, or improve AGENTS.md, CLAUDE.md, or a repo's agent instructions, or after the agents-md gate reports findings.
+description: Review a repository's AGENTS.md (or CLAUDE.md) and the whole cascade of nested and parent instruction files for Claude Code and OpenCode — run the agents-md-chkr deterministic probes, then judge the content against a rubric and propose at most five advisory ADD, CUT, MOVE, or REWORD edits, one block at a time. Use when asked to audit, review, grade, or improve AGENTS.md, CLAUDE.md, or a repo's agent instructions, or after the agents-md gate reports findings.
 ---
 
 # AGENTS.md review
@@ -17,16 +17,23 @@ agents-md-chkr <repo>          # installed binary
 cargo agents-md-chkr <repo>    # from a code-harness-vitals clone
 ```
 
-Quote the output verbatim, every line. A `fail` comes before any content review: when
-`AM01` (no `AGENTS.md`) or `AM02`/`AM03` (a `CLAUDE.md` that shadows it) fail, propose
-the layout fix first and review the file that agents actually read.
+Run it without `--repo-only`: the user-scope probes (`AM14`, `AM15`) find instruction files
+in the parent directories, which change what the agents read in every session here.
 
-Exit status: 0 = no probe failed, 1 = a probe failed, 2 = the repository cannot be read.
+Quote the output verbatim, every line. A `fail` comes before any content review: when
+`AM01` (no `AGENTS.md`), `AM02`/`AM03` (a `CLAUDE.md` that shadows it), or `AM09` (a nested
+`CLAUDE.md` with its own rules) fail, or `AM14` reports a `CLAUDE.md` above the repository,
+propose the layout fix first and review the files that agents actually read.
+
+Exit status: 0 = no repository probe failed, 1 = one failed, 2 = the repository cannot be
+read. User-scope findings never change it.
 
 ## 2. Read everything that is loaded
 
 Read the rules file in full, then every file it imports (`@path`) or names as required
-reading (ADR index, `TODO.md`, docs). List the project's skills (`.claude/skills/`,
+reading (ADR index, `TODO.md`, docs). Then read every file of the cascade: each path that
+`AM13` lists (nested `AGENTS.md`, `CLAUDE.md`, `.claude/rules/`) and each path that `AM14`
+or `AM15` reports above the repository — ask before reading outside the repository. List the project's skills (`.claude/skills/`,
 `.opencode/skills/`, `.agents/skills/`) and skim their descriptions. Look at the repo
 itself — manifest, scripts, CI, layout — to check the commands and paths that the file
 names.
@@ -55,6 +62,8 @@ criterion that does not apply here is not missing.
 | 14 | Safety | holds no secrets, credentials, personal data, or private context |
 | 15 | Right moment | has no workflow- or tool-specific block that only matters during one task (deploy steps, a test harness, a library's API): that belongs in a skill, a path-scoped rule, or the docs |
 | 16 | Earns its place | has no generic advice that would hold in any repo, and no line that changes nothing an agent does |
+| 17 | Cascade coherence | no nested or parent file contradicts the root file or another file (agents concatenate them and may follow either side); none repeats a root rule; a rule for the whole repo lives at the root, a rule for one subtree lives in that subtree's `AGENTS.md` or a path-scoped rule |
+| 18 | Same rules for both agents | no rule lives only where one agent reads it — a nested `CLAUDE.md`, `.claude/rules/` without an OpenCode `instructions` entry, `.claude/AGENTS.md`; rules in parent directories are either personal (move them to `~/.claude/CLAUDE.md` and `~/.config/opencode/AGENTS.md`) or shared (move them into the repository) |
 
 For 12 or 13 missing: propose the mechanism, and name
 [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) as one way to set it up

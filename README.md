@@ -38,7 +38,7 @@ with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
 
 | Gate | Pillar | Deterministic probes (Rust) | Agent review (skill, advisory) | Status |
 | ---- | ------ | --------------------------- | ------------------------------ | ------ |
-| [`agents-md`](apps/agents-md-chkr/) | 1 | `AM01`–`AM08`, below | [`agents-md-review`](apps/agents-md-chkr/skills/agents-md-review/SKILL.md): 16-criterion rubric | ✅ |
+| [`agents-md`](apps/agents-md-chkr/) | 1 | `AM01`–`AM15`, below | [`agents-md-review`](apps/agents-md-chkr/skills/agents-md-review/SKILL.md): 18-criterion rubric | ✅ |
 | `skills` | 2 | frontmatter, description length, body budget, referenced files exist | triggerability, overlap, unsafe scripts | ⏳ |
 | `codebase-memory` | 3 | a code-intelligence MCP server or plugin, wired in for both agents | - | ⏳ |
 | `context-limiting` | 4 | an output-capping tool or hook, wired in for both agents | - | ⏳ |
@@ -48,8 +48,16 @@ with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
 ### `agents-md`
 
 ```sh
-cargo agents-md-chkr /path/to/repo   # exit 0: no fail · 1: a probe failed · 2: cannot read
+cargo agents-md-chkr /path/to/repo              # exit 0: no fail · 1: a probe failed · 2: cannot read
+cargo agents-md-chkr --repo-only /path/to/repo  # CI: skip the parent directories and home
 ```
+
+Instruction files cascade: Claude Code loads every `CLAUDE.md` from the working directory
+up to `/`, and one of them anywhere on that path turns off every `AGENTS.md`; OpenCode
+loads every `AGENTS.md` up to `$HOME` and never reads `CLAUDE.md`. Both load
+subdirectory files as they work there. The gate checks the whole cascade, in the
+repository and, as user-scope findings that never fail the gate, above it
+([ADR 4](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md#the-agents-md-gate)).
 
 | Probe | Checks | Fails or warns when |
 | ----- | ------ | ------------------- |
@@ -61,11 +69,18 @@ cargo agents-md-chkr /path/to/repo   # exit 0: no fail · 1: a probe failed · 2
 | `AM06` | chars | fail above 40,000 |
 | `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist |
 | `AM08` | continuous improvement | warn: no `kaizen` skill; the fix points to [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) |
+| `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail: own rules that OpenCode never reads and that hide the sibling `AGENTS.md` from Claude Code; warn: nested `CLAUDE.local.md` |
+| `AM10` | nested budgets | `AM05`/`AM06` on every nested instruction file and `.claude/rules` file |
+| `AM11` | `.claude/rules` parity | warn: rules files that `opencode.json` `instructions` does not list |
+| `AM12` | names an agent skips | warn: `.claude/AGENTS.md`, `AGENTS.local.md`, `AGENTS.override.md`, `agents.md` |
+| `AM13` | cascade inventory | lists every nested instruction file |
+| `AM14` | user scope: `CLAUDE.md` above the repository | warn: Claude Code loads it and skips every `AGENTS.md` (`~/.claude/CLAUDE.md` exempt) |
+| `AM15` | user scope: `AGENTS.md` above the repository | warn: rules that teammates and CI do not have |
 
 The review skill checks what probes cannot: real commands, conventions, guardrails
 (think before coding, simplicity, surgical changes, verify in a loop), reuse before
-create, ADR discipline, rules hygiene, handoff and kaizen equivalents, and blocks that
-belong in a skill. To use it, copy `apps/agents-md-chkr/skills/agents-md-review/` into
+create, ADR discipline, rules hygiene, handoff and kaizen equivalents, blocks that belong
+in a skill, contradictions across the cascade, and rules only one agent sees. To use it, copy `apps/agents-md-chkr/skills/agents-md-review/` into
 `.claude/skills/` (Claude Code and OpenCode both read it), then ask your agent to review
 `AGENTS.md`.
 
@@ -81,7 +96,8 @@ cargo xtask install-hooks  # once: pre-commit runs every gate
 cargo agents-md-chkr       # run the agents-md gate on the current directory
 cargo dummy                # count files, lines, and chars in the current directory
 cargo test                 # run the tests
-cargo xtask check          # every gate: fmt, clippy, tests, docs, cargo-deny, 90% branch coverage
+cargo xtask e2e            # container end-to-end tests: a fake filesystem root (needs docker)
+cargo xtask check          # every gate: fmt, clippy, tests, docs, cargo-deny, e2e, 90% branch coverage
 ```
 
 ## Related projects

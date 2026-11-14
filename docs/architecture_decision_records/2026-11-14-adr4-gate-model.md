@@ -13,6 +13,8 @@ the ADR 3 stack. The first gate, `agents-md`, proves the model.
 | Shared findings, budgets, markers, file I/O | ✅ Done    | `pkg/vitals-utils/`                        |
 | `agents-md` gate: probes                    | ✅ Done    | `apps/agents-md-chkr/`                     |
 | `agents-md` gate: review skill              | ✅ Done    | `apps/agents-md-chkr/skills/agents-md-review/` |
+| `agents-md` gate: cascade probes            | ✅ Done    | `apps/agents-md-chkr/src/{cascade,nested,ancestors}.rs` |
+| Container end-to-end tests                  | ✅ Done    | `apps/agents-md-chkr/tests/container.rs`   |
 | Other gates (catalog below)                 | ⏳ Planned | -                                          |
 
 ## Problem
@@ -79,7 +81,7 @@ in Claude Code and OpenCode, which read the same `SKILL.md`.
 
 | Gate | Pillar | Probes (deterministic) | Review (agent, advisory) | Status |
 | --- | --- | --- | --- | --- |
-| `agents-md` | 1. Instruction files | `AM01`–`AM08`, below | `agents-md-review`: 16-criterion rubric | ✅ |
+| `agents-md` | 1. Instruction files | `AM01`–`AM15`, below | `agents-md-review`: 18-criterion rubric | ✅ |
 | `skills` | 2. Skills | `SKILL.md` frontmatter, description length, body budget, referenced files exist | description triggerability, overlap between skills, unsafe script patterns | ⏳ |
 | `codebase-memory` | 3. Codebase memory | a code-intelligence MCP server or plugin is wired in for both agents | - | ⏳ |
 | `context-limiting` | 4. Context limiting | an output-capping tool or hook is wired in for both agents | - | ⏳ |
@@ -88,11 +90,25 @@ in Claude Code and OpenCode, which read the same `SKILL.md`.
 
 ### The `agents-md` gate
 
-Claude Code reads `AGENTS.md` only when no `CLAUDE.md`, `.claude/CLAUDE.md`, or
-`CLAUDE.local.md` exists in the working directory or above it; OpenCode reads
-`AGENTS.md` first. A single canonical `AGENTS.md` is therefore the only layout that
-both agents read the same way. A `CLAUDE.md` that only imports it (`@AGENTS.md`) or is a
-symbolic link to it is an accepted bridge.
+Instruction files cascade, and the cascade changes what each agent reads. Both agents
+concatenate every file they load; neither has override semantics, so when two files
+disagree the model may follow either one.
+
+| Where | Claude Code | OpenCode 2 |
+| --- | --- | --- |
+| Working directory and every parent, up to `/` | `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` load at launch; `AGENTS.md` and `.claude/AGENTS.md` too, but **only when none of the three `CLAUDE.md` files exists at that level or above** | every `AGENTS.md` from the working directory up to `$HOME` (when the repository is under it) or the project root, nearest first; no `CLAUDE.md` |
+| Subdirectories | `CLAUDE.md` and `CLAUDE.local.md` load on demand when a file there is touched; a subdirectory `AGENTS.md` loads on Read only if that subdirectory has none of the three `CLAUDE.md` files | a subdirectory `AGENTS.md` loads when the read tool opens a file below it |
+| `.claude/rules/**/*.md` | loaded, at launch or (`paths`) on demand | not read, unless listed in `opencode.json` `instructions` |
+| Exempt | `~/.claude/CLAUDE.md` and the managed file load alongside `AGENTS.md` | `~/.config/opencode/AGENTS.md` is the global file |
+| Never read | `AGENTS.local.md`, `AGENTS.override.md`, `.agents/` | anything but `AGENTS.md` and configured `instructions` |
+| Size | launch files over 4 MiB are skipped; on-demand files over 40,000 chars (200K context) are truncated | no limit found |
+
+A single canonical `AGENTS.md` per directory is therefore the only layout that both agents
+read the same way. A `CLAUDE.md` that only imports it (`@AGENTS.md`) or is a symbolic link
+to it is an accepted bridge. A `CLAUDE.md` in a parent directory outside the repository —
+`~/CLAUDE.md`, `~/workspace/CLAUDE.md`, `/CLAUDE.md` — silently turns off every
+`AGENTS.md` in Claude Code while OpenCode keeps reading them: the two agents then follow
+different rules with nothing in the repository to show it.
 
 | Id | Probe | Verdict |
 | --- | --- | --- |
@@ -104,14 +120,45 @@ symbolic link to it is an accepted bridge.
 | `AM06` | char budget | fail above 40,000 chars, the per-file limit Claude Code applies to instruction files loaded on demand (200K context window) |
 | `AM07` | resume after `/clear` or a compaction | warn unless the first 10 lines name `TODO.md` and `TODO.md` exists |
 | `AM08` | continuous improvement | warn unless a `kaizen` skill exists under `.claude/skills/`, `.opencode/skills/`, or `.agents/skills/`; the fix suggests qol-mini |
+| `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail for each one with its own rules (OpenCode never reads it; Claude Code skips the sibling `AGENTS.md`); warn for a nested `CLAUDE.local.md`; bridges and links pass |
+| `AM10` | nested budgets | `AM05`/`AM06` budgets applied to every nested instruction file and every `.claude/rules` file |
+| `AM11` | `.claude/rules` parity | warn when rules files exist and `opencode.json[c]` does not list `.claude/rules` |
+| `AM12` | names an agent skips | warn for `.claude/AGENTS.md` (Claude Code only), `AGENTS.local.md`, `AGENTS.override.md`, and case variants such as `agents.md` |
+| `AM13` | cascade inventory | lists every nested instruction file, for the review to read |
+| `AM14` | user scope: `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` in a parent directory (except `~/.claude/CLAUDE.md`) | warn: Claude Code loads it and, without a bridge in the repository, skips every `AGENTS.md` |
+| `AM15` | user scope: `AGENTS.md`, `.claude/AGENTS.md` in a parent directory | warn: rules that teammates and CI do not have |
+
+The nested walk is the tree an agent sees: hidden files included, `.gitignore` honored,
+`.git/` and `.claude/worktrees/` skipped. User-scope probes (`AM14`, `AM15`) read every
+parent directory up to `/` and the home directory; they are labeled `(user scope)`, never
+fail, and never change the exit status. `--repo-only` skips them for reproducible CI runs.
 
 `AM07` and `AM08` detect one convention by its explicit markers. The review recognizes
 equivalents under other names (rubric criteria 12 and 13) and suggests
 [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) when there is none.
 
 Not probed yet: `@import` resolution and depth, backticked paths and commands that do
-not resolve, nested and `.claude/rules/` files, rules files above the repository root
-(user scope), and JSON/SARIF output.
+not resolve, `paths` frontmatter of rules, instruction files inside ignored dependency
+directories (`node_modules/*/AGENTS.md` loads when an agent reads a file there), sessions
+started in a subdirectory instead of the root, the Claude Code **Project instructions**
+setting (`claude-md-and-agents-md` loads both families) and `claudeMdExcludes`, which live
+in user settings, and JSON/SARIF output.
+
+### Tests
+
+Every gate is tested at three levels, all run by `cargo xtask check`:
+
+- **Unit**: each probe on in-memory snapshots, each classification and budget edge, and
+  property tests on the algebra (`TextSize`, `Budget`).
+- **End to end on real trees**: the binary on `tempfile` directory trees, one per case:
+  every probe, symbolic links, ignore rules, and exit statuses 0, 1, and 2. Repository
+  cases run with `--repo-only`; user-scope cases build their parent directories and a
+  fake `$HOME` inside the temporary directory.
+- **End to end in a container**: a temporary directory cannot hold `/CLAUDE.md` or a real
+  `$HOME`. `cargo xtask e2e` builds a static (musl) binary and runs it in `FROM scratch`
+  images whose whole filesystem is the fixture (`/CLAUDE.md`, `/home/dev/CLAUDE.md`,
+  `/home/dev/.claude/CLAUDE.md`, the repository at `/home/dev/work/repo`), with no network
+  and no base image to pull. It needs docker, locally and in CI.
 
 ## Alternatives Rejected
 
@@ -153,9 +200,15 @@ negatives that a deterministic gate cannot justify; that judgment belongs to the
 ## References
 
 - [Claude Code — How Claude remembers your project](https://code.claude.com/docs/en/memory)
-  — 200-line target, four-hop imports, when AGENTS.md is read, the 40,000-char
-  per-file limit.
+  — 200-line target, four-hop imports, launch and on-demand loading, when AGENTS.md is
+  read, the 4 MiB and 40,000-char limits, conflicts.
 - [Using CLAUDE.md files](https://claude.com/resources/articles/using-claude-md-files)
+- [OpenCode source](https://github.com/anomalyco/opencode/tree/024a1462f5/packages/core/src)
+  at `024a1462f5` (2026-11-14): `config/plugin/instruction.ts` (the `AGENTS.md` walk up
+  to `$HOME` or the project root, configured `instructions`), `tool/plugin/read.ts`
+  (subdirectory `AGENTS.md` on read). The V1 rules page
+  (<https://opencode.ai/docs/rules/>) still describes a `CLAUDE.md` fallback that the V2
+  source no longer has.
 - [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) — kaizen skill, `TODO.md`
   handoff, ADR 0003 (AGENTS.md as the canonical rules file).
 - Rubric sources: `apps/agents-md-chkr/skills/agents-md-review/references/sources.md`.
