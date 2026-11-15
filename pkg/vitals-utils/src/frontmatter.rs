@@ -103,6 +103,16 @@ impl Frontmatter {
         }
     }
 
+    /// The first field whose value YAML rejects; `None` when every value parses, or when
+    /// there is no block to read.
+    #[must_use]
+    pub fn first_mistake(&self) -> Option<&Field> {
+        match self {
+            Self::Fields(fields) => fields.iter().find(|field| field.mistake.is_some()),
+            Self::Missing | Self::Unclosed => None,
+        }
+    }
+
     /// The string value of `key`, trimmed; `None` when absent, empty, or not a string.
     #[must_use]
     pub fn text(&self, key: &str) -> Option<&str> {
@@ -495,6 +505,9 @@ mod tests {
         assert!(Mistake::Colon.repaired());
         assert!(!Mistake::Reserved { repaired: false }.repaired());
         assert!(Mistake::TaggedText.reason().contains("[...]"));
+        assert_eq!(found.first_mistake().unwrap().key, "description");
+        assert_eq!(fields("---\nname: x\n---\n").first_mistake(), None);
+        assert_eq!(Frontmatter::Unclosed.first_mistake(), None);
     }
 
     #[test]

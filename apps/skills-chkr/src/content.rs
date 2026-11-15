@@ -146,14 +146,13 @@ fn parses(judged: &Judged<'_>) -> Option<Finding> {
             "the frontmatter opens on line 1 and no `---` line closes it".to_owned(),
             "close the block with a `---` line before the body".to_owned(),
         ),
-        Frontmatter::Fields(fields) => yaml_problem(fields)?,
+        Frontmatter::Fields(_) => yaml_problem(judged.front.first_mistake()?)?,
     };
     Some(judged.finding("SK06", Verdict::Fail, message).with_fix(fix))
 }
 
-/// The first plain value that YAML rejects: message and fix.
-fn yaml_problem(fields: &[Field]) -> Option<(String, String)> {
-    let field = fields.iter().find(|field| field.mistake.is_some())?;
+/// The message and fix for a plain value that YAML rejects.
+fn yaml_problem(field: &Field) -> Option<(String, String)> {
     let mistake = field.mistake?;
     let opencode = if mistake.repaired() {
         "OpenCode repairs the value"

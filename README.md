@@ -112,7 +112,7 @@ found that instruction following degrades as instructions accumulate, earlier on
 | `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist | [qol-mini] convention |
 | `AM08` | continuous improvement | warn: no `kaizen` skill in `.claude/skills/` (Claude Code reads no other root); the fix points to [qol-mini] | [qol-mini] convention; [skills-docs] for the root |
 | `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail: own rules that OpenCode never reads and that hide the sibling `AGENTS.md` from Claude Code; warn: nested `CLAUDE.local.md` | [memory], [oc] |
-| `AM10` | nested budgets | warn above 200 lines; fail above 40,000 chars for a file loaded on demand (subdirectory `CLAUDE.md`, subdirectory rules, rules with `paths`), above 4 MiB for the rest | [memory] |
+| `AM10` | nested budgets | warn above 200 lines; fail above 40,000 chars for a file loaded on demand (subdirectory `CLAUDE.md` and its imports, subdirectory rules, rules with `paths`); warn above 70,000 chars for a subdirectory `AGENTS.md` (measured: a larger one arrives as a preview); fail above 4 MiB for the rest | [memory]; ADR 4 runs |
 | `AM11` | `.claude/rules` parity | warn: rules files that `opencode.json` `instructions` does not list | [memory], [oc] |
 | `AM12` | names an agent skips | warn: `.claude/AGENTS.md`, `AGENTS.local.md`, `AGENTS.override.md`, `agents.md` | [memory], [oc] |
 | `AM13` | cascade inventory | lists every nested instruction file | - |

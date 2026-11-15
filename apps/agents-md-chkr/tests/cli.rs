@@ -420,8 +420,8 @@ fn nested_budgets_apply_to_every_cascade_file() {
     .code(1)
     .stdout(contains("[warn] AM10 pkg/AGENTS.md: 250 lines"))
     .stdout(contains(
-        "[fail] AM10 .claude/rules/big.md: 4 lines as loaded, 40023 chars (warn above 200 \
-         lines; fail above 40000 chars, loaded on demand)",
+        "[fail] AM10 .claude/rules/big.md: 4 lines as loaded (warn above 200), 40023 chars \
+         (limit 40000 chars)",
     ));
 }
 

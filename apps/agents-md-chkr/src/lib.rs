@@ -25,7 +25,7 @@ use vitals_utils::{Error, Report};
 
 pub use content::{BLOCK_CHARS, EMPHASIS_BUDGET, HEADING_FLOOR};
 pub use imports::HOPS;
-pub use probes::{GATE, HANDOFF_WINDOW, LAUNCH_BYTES, LINES, ON_DEMAND_CHARS};
+pub use probes::{ATTACHED_CHARS, GATE, HANDOFF_WINDOW, LAUNCH_BYTES, LINES, ON_DEMAND_CHARS};
 pub use vitals_utils::Reach;
 
 /// Runs every probe of the `agents-md` gate on the repository at `root`, as far as `reach`.

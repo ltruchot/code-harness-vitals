@@ -5,10 +5,12 @@
 //! list or a comma-separated string; a rule with `paths` loads only when Claude works with a
 //! matching file. A pattern that matches no file in the repository never loads its rule.
 
+use std::iter::Peekable;
 use std::path::{Path, PathBuf};
+use std::str::Chars;
 
 use globset::{GlobBuilder, GlobMatcher};
-use vitals_utils::frontmatter::{self, Field, Frontmatter, Mistake};
+use vitals_utils::frontmatter::{self, Frontmatter, Mistake};
 use vitals_utils::{Finding, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify};
@@ -60,7 +62,7 @@ fn judge(rule: &Entry, snapshot: &Snapshot) -> Option<Finding> {
         ));
     }
     let field = front.field("paths")?;
-    if let Some(broken) = yaml_mistake(&front) {
+    if let Some(broken) = front.first_mistake() {
         return Some(warn(
             format!(
                 "line {}: YAML rejects this frontmatter (the value {}), so Claude Code ignores \
@@ -119,39 +121,42 @@ fn patterns_finding(
     (!dead.is_empty()).then(|| dead_patterns(rule, line, &dead))
 }
 
-/// The first field whose value YAML rejects.
-fn yaml_mistake(front: &Frontmatter) -> Option<&Field> {
-    match front {
-        Frontmatter::Fields(fields) => fields.iter().find(|field| field.mistake.is_some()),
-        Frontmatter::Missing | Frontmatter::Unclosed => None,
+/// How many patterns the brace groups of `pattern` expand to, nested groups included; 0
+/// without braces, which do not count against the budget (memory docs, "Path-specific
+/// rules").
+fn expansions(pattern: &str) -> usize {
+    if pattern.contains('{') {
+        sequence(&mut pattern.chars().peekable(), false)
+    } else {
+        0
     }
 }
 
-/// How many patterns the brace groups of `pattern` expand to; 0 without braces, which do
-/// not count against the budget (memory docs, "Path-specific rules").
-fn expansions(pattern: &str) -> usize {
-    let mut depth = 0_usize;
+/// The expansion count of a sequence, up to the `,` or `}` that ends it inside a group.
+fn sequence(chars: &mut Peekable<Chars<'_>>, inside: bool) -> usize {
     let mut total = 1_usize;
-    let mut options = 0_usize;
-    let mut braced = false;
-    for c in pattern.chars() {
-        match (c, depth) {
-            ('{', 0) => {
-                depth = 1;
-                options = 1;
-                braced = true;
-            }
-            ('{', _) => depth = depth.saturating_add(1),
-            (',', 1) => options = options.saturating_add(1),
-            ('}', 1) => {
-                depth = 0;
-                total = total.saturating_mul(options);
-            }
-            ('}', 2..) => depth = depth.saturating_sub(1),
-            _ => {}
+    while let Some(&c) = chars.peek() {
+        if inside && (c == ',' || c == '}') {
+            break;
+        }
+        chars.next();
+        if c == '{' {
+            total = total.saturating_mul(group(chars));
         }
     }
-    if braced { total } else { 0 }
+    total
+}
+
+/// The expansion count of a group after its `{`: the sum of its alternatives.
+fn group(chars: &mut Peekable<Chars<'_>>) -> usize {
+    let mut sum = 0_usize;
+    loop {
+        sum = sum.saturating_add(sequence(chars, true));
+        match chars.next() {
+            Some(',') => {}
+            _ => return sum,
+        }
+    }
 }
 
 fn dead_patterns(rule: &Entry, line: usize, dead: &[String]) -> Finding {
@@ -363,7 +368,9 @@ mod tests {
             braces[0].1
         );
         assert_eq!(super::expansions("src/**/*.ts"), 0);
-        assert_eq!(super::expansions("{a,{b,c}}/*.{ts,tsx}"), 4);
+        assert_eq!(super::expansions("{a,{b,c}}/*.{ts,tsx}"), 6);
+        assert_eq!(super::expansions("{a,b}/{c,d}/*.{ts,tsx}"), 8);
+        assert_eq!(super::expansions("{a,b"), 2);
     }
 
     #[test]

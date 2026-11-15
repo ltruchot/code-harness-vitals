@@ -7,8 +7,8 @@ use vitals_utils::frontmatter;
 use vitals_utils::{Finding, TextSize, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify, scope_dir};
-use crate::imports::{Imported, Load};
-use crate::probes::{LAUNCH_BYTES, LINES, ON_DEMAND_CHARS, layout};
+use crate::imports::{self, Imported, Load};
+use crate::probes::{ATTACHED_CHARS, LAUNCH_BYTES, LINES, ON_DEMAND_CHARS, layout};
 use crate::rules;
 use crate::snapshot::{Entry, Snapshot};
 
@@ -82,12 +82,13 @@ fn shadowing(entry: &Entry, nested: &[Entry]) -> Option<Finding> {
     )
 }
 
-/// `AM10`: every nested instruction file, as loaded, is within the line and char budgets.
+/// `AM10`: every nested instruction file, as loaded, is within the line budget and the size
+/// limit of the way Claude Code delivers it.
 fn budgets(snapshot: &Snapshot) -> Vec<Finding> {
     let found = snapshot
         .nested
         .iter()
-        .filter_map(|entry| over_budget(entry, &snapshot.imported))
+        .flat_map(|entry| over_budget(entry, &snapshot.imported))
         .collect();
     or_pass(
         found,
@@ -100,65 +101,144 @@ fn budgets(snapshot: &Snapshot) -> Vec<Finding> {
     )
 }
 
-fn over_budget(entry: &Entry, imported: &Imported) -> Option<Finding> {
-    let text = entry.file.content.as_deref()?;
+/// How Claude Code delivers a nested instruction file, which sets its size limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// Loaded on demand, under the per-file limit (L9).
+    OnDemand,
+    /// A subdirectory `AGENTS.md`, attached to a Read result by a hook (L13).
+    Attached,
+    /// Loaded at launch, whole up to 4 MiB (L8).
+    Launch,
+}
+
+/// The size of `text` against the limit of `delivery`: the measure, its unit, the limit,
+/// and the verdict.
+fn size(text: &str, delivery: Delivery) -> (usize, &'static str, usize, Verdict) {
+    let chars = TextSize::of(text).chars();
+    match delivery {
+        Delivery::OnDemand => (
+            chars,
+            "chars",
+            ON_DEMAND_CHARS.fail(),
+            ON_DEMAND_CHARS.verdict(chars),
+        ),
+        Delivery::Attached => (
+            chars,
+            "chars",
+            ATTACHED_CHARS.warn(),
+            ATTACHED_CHARS.verdict(chars),
+        ),
+        Delivery::Launch => (
+            text.len(),
+            "bytes",
+            LAUNCH_BYTES.fail(),
+            LAUNCH_BYTES.verdict(text.len()),
+        ),
+    }
+}
+
+/// What to do about a file over its size limit.
+const fn size_fix(delivery: Delivery) -> &'static str {
+    match delivery {
+        Delivery::OnDemand => {
+            "split it: past the per-file limit (40,000 chars with a 200K context window, \
+             150,000 with 1M) Claude Code sends only the start of a file it loads on demand"
+        }
+        Delivery::Attached => {
+            "split it into smaller nested AGENTS.md files, or move detail into docs it links \
+             to: a larger one reached Claude Code 2.1.325 only as a preview"
+        }
+        Delivery::Launch => "split it: Claude Code skips a file over 4 MiB and loads none of it",
+    }
+}
+
+fn over_budget(entry: &Entry, imported: &Imported) -> Vec<Finding> {
+    let Some(text) = entry.file.content.as_deref() else {
+        return Vec::new();
+    };
     let kind = kind(entry);
     if kind == Some(Kind::Unread) {
-        return None;
+        return Vec::new();
     }
+    let delivery = delivery(entry);
     let load = Load::of(&entry.path, text, imported, kind == Some(Kind::Agents));
     let (lines, _) = load.larger(TextSize::lines);
-    // The per-file limit applies to the file itself (`wc -m`, memory docs).
-    let chars = TextSize::of(text).chars();
-    let limited = on_demand(entry);
-    let size = if limited {
-        ON_DEMAND_CHARS.verdict(chars)
-    } else {
-        LAUNCH_BYTES.verdict(text.len())
-    };
-    let verdict = LINES.verdict(lines).max(size);
-    (verdict > Verdict::Pass).then(|| {
-        let limit = if limited {
-            format!(
-                "fail above {} chars, loaded on demand",
-                ON_DEMAND_CHARS.fail()
-            )
+    let (measure, unit, limit, sized) = size(text, delivery);
+    let verdict = LINES.verdict(lines).max(sized);
+    let own = (verdict > Verdict::Pass).then(|| {
+        let fix = if sized > Verdict::Pass {
+            size_fix(delivery)
         } else {
-            format!("fail above {} bytes", LAUNCH_BYTES.fail())
+            "aim under 200 lines: move what only one task needs into a skill or a \
+             path-scoped rule"
         };
         Finding::new(
             "AM10",
             verdict,
             &entry.path,
             format!(
-                "{lines} lines as loaded, {chars} chars (warn above {} lines; {limit})",
+                "{lines} lines as loaded (warn above {}), {measure} {unit} (limit {limit} {unit})",
                 LINES.warn(),
             ),
         )
-        .with_fix(
-            "split it: past the per-file limit Claude Code sends only the start of a file it \
-             loads on demand",
-        )
-    })
+        .with_fix(fix)
+    });
+    let imports = if delivery == Delivery::OnDemand {
+        imports_over(entry, text, imported)
+    } else {
+        Vec::new()
+    };
+    own.into_iter().chain(imports).collect()
 }
 
-/// Whether Claude Code loads the file on demand, under the per-file limit: a `CLAUDE.md` or
-/// `CLAUDE.local.md` below the root, a rules file in a subdirectory's `.claude/rules/`, or a
-/// rule with `paths` (memory docs, "Claude ignores the end of my subdirectory CLAUDE.md").
-/// A subdirectory `AGENTS.md` is not in the docs' list.
-fn on_demand(entry: &Entry) -> bool {
+/// The files that an on-demand file imports, over the per-file limit they load under (L9).
+fn imports_over(entry: &Entry, text: &str, imported: &Imported) -> Vec<Finding> {
+    imports::expand(&entry.path, text, imported)
+        .loaded
+        .into_iter()
+        .filter_map(|path| {
+            let body = imported.get(&path)?.as_deref()?;
+            let (chars, _, limit, verdict) = size(body, Delivery::OnDemand);
+            (verdict > Verdict::Pass).then(|| {
+                Finding::new(
+                    "AM10",
+                    verdict,
+                    &path,
+                    format!(
+                        "{chars} chars (limit {limit} chars), imported by {}, which Claude Code \
+                         loads on demand",
+                        entry.path.display()
+                    ),
+                )
+                .with_fix(size_fix(Delivery::OnDemand))
+            })
+        })
+        .collect()
+}
+
+/// How Claude Code delivers `entry`: on demand for a `CLAUDE.md` or `CLAUDE.local.md` below
+/// the root, a rules file in a subdirectory's `.claude/rules/`, or a rule whose `paths`
+/// parse (memory docs, "Claude ignores the end of my subdirectory CLAUDE.md"); attached by
+/// a hook for a subdirectory `AGENTS.md`; at launch for a root rule without `paths`, or
+/// whose frontmatter YAML rejects (Claude Code then ignores it).
+fn delivery(entry: &Entry) -> Delivery {
     match kind(entry) {
-        Some(Kind::Claude | Kind::DotClaude | Kind::ClaudeLocal) => true,
+        Some(Kind::Claude | Kind::DotClaude | Kind::ClaudeLocal) => Delivery::OnDemand,
+        Some(Kind::Agents | Kind::ClaudeAgents) => Delivery::Attached,
         Some(Kind::Rule) => {
             let nested = rules::scope_of(&entry.path) != Path::new("");
-            let scoped = entry
-                .file
-                .content
-                .as_deref()
-                .is_some_and(|text| frontmatter::read(text).items("paths").is_some());
-            nested || scoped
+            let scoped = entry.file.content.as_deref().is_some_and(|text| {
+                let front = frontmatter::read(text);
+                front.first_mistake().is_none() && front.items("paths").is_some()
+            });
+            if nested || scoped {
+                Delivery::OnDemand
+            } else {
+                Delivery::Launch
+            }
         }
-        _ => false,
+        Some(Kind::Unread) | None => Delivery::Launch,
     }
 }
 
@@ -282,6 +362,14 @@ mod tests {
         })
     }
 
+    fn run_with(imported: crate::imports::Imported, nested: Vec<Entry>) -> Vec<Finding> {
+        findings(&Snapshot {
+            nested,
+            imported,
+            ..Snapshot::default()
+        })
+    }
+
     fn of(found: &[Finding], probe: &str) -> Vec<(Verdict, String)> {
         found
             .iter()
@@ -350,18 +438,29 @@ mod tests {
         let long = "x\n".repeat(201);
         let huge = "x".repeat(40_001);
         let scoped = format!("---\npaths: src/**\n---\n{huge}");
-        let found = run(vec![
-            file("a/AGENTS.md", &long),
-            // A root rule without `paths` loads at launch, whole: 4 MiB is its limit.
-            file(".claude/rules/big.md", &huge),
-            file(".claude/rules/scoped.md", &scoped),
-            file("pkg/.claude/rules/sub.md", &huge),
-            file("d/CLAUDE.local.md", &huge),
-            // The docs list no per-file limit for a subdirectory AGENTS.md.
-            file("e/AGENTS.md", &huge),
-            file("b/agents.md", &huge),
-            file("c/AGENTS.md", "short\n"),
-        ]);
+        let imported = [(PathBuf::from("g/big.md"), Some(huge.clone()))].into();
+        let found = run_with(
+            imported,
+            vec![
+                file("a/AGENTS.md", &long),
+                // A root rule without `paths` loads at launch, whole: 4 MiB is its limit.
+                file(".claude/rules/big.md", &huge),
+                file(".claude/rules/scoped.md", &scoped),
+                file("pkg/.claude/rules/sub.md", &huge),
+                file("d/CLAUDE.local.md", &huge),
+                // A subdirectory AGENTS.md is attached by a hook: it warns above 70,000 chars.
+                file("e/AGENTS.md", &huge),
+                file("f/AGENTS.md", &"x".repeat(70_001)),
+                // YAML that does not parse: Claude Code ignores `paths`, the rule loads at launch.
+                file(
+                    ".claude/rules/broken.md",
+                    &format!("---\npaths: src/**\nnote: a: b\n---\n{huge}"),
+                ),
+                file("g/CLAUDE.md", "@big.md\n"),
+                file("b/agents.md", &huge),
+                file("c/AGENTS.md", "short\n"),
+            ],
+        );
         assert_eq!(
             of(&found, "AM10"),
             [
@@ -369,6 +468,8 @@ mod tests {
                 (Verdict::Fail, ".claude/rules/scoped.md".to_owned()),
                 (Verdict::Fail, "pkg/.claude/rules/sub.md".to_owned()),
                 (Verdict::Fail, "d/CLAUDE.local.md".to_owned()),
+                (Verdict::Warn, "f/AGENTS.md".to_owned()),
+                (Verdict::Fail, "g/big.md".to_owned()),
             ]
         );
     }

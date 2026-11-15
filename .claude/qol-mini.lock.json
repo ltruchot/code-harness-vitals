@@ -2,14 +2,14 @@
   "skills": {
     "kaizen": {
       "answers": {
-        "RELEASE_COMMAND": "\"$HOME/.vite-plus/js_runtime/node/26.13.0/bin/node\" \"$HOME/.claude/hooks/precompact-kaizen.mjs\" --release"
+        "RELEASE_COMMAND": "node \"$HOME/.claude/hooks/precompact-kaizen.mjs\" --release"
       },
       "files": {
-        "SKILL.md": "fcdfd315ba8553ad06b5cecf3456197ee5eb592ee554df1c18eac676c70813f0"
+        "SKILL.md": "655372b5a9e9905f799646fbedd59a872c99ec417b234817210e2ccee2c353ae"
       },
       "path": ".claude/skills/kaizen",
       "ref": "0.6.3",
-      "renderedHash": "89058c80a4d04f7e820b04ed180b75836114b301b75ce33cfbf5eee17f0430a0",
+      "renderedHash": "5e99c10090d66b98d306810948b3b885ee95cb5981000288a2472fe61604130a",
       "secrets": [],
       "sha": "local:14c55c3d8072c12494b2139f1f67e99cf2c34bd12c2a4f5567e6f10b2e6544df",
       "skillPath": "skills/kaizen",

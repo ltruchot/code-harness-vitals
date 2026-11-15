@@ -129,7 +129,7 @@ practice with no agent behavior behind it.
 | `AM07` | resume after `/clear` or a compaction | warn unless the first 10 lines name `TODO.md` and `TODO.md` exists | **convention** ([qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) handoff) |
 | `AM08` | continuous improvement | warn unless a `kaizen` skill exists in `.claude/skills/`, the only skill root both agents read; the fix suggests qol-mini, or a symbolic link into `.claude/skills/` | **convention** (qol-mini kaizen); C2 for the root |
 | `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail for each one with its own rules (OpenCode never reads it; Claude Code skips the sibling `AGENTS.md`); warn for a nested `CLAUDE.local.md`; bridges and links pass | L5, L7 |
-| `AM10` | nested budgets | warn above 200 lines (as loaded); fail above 40,000 chars for a file Claude Code loads on demand (a subdirectory `CLAUDE.md` or `CLAUDE.local.md`, a subdirectory's rules, a rule with `paths`), above 4 MiB for the rest | A1, L8, L9 |
+| `AM10` | nested budgets | warn above 200 lines (as loaded); fail above 40,000 chars for a file Claude Code loads on demand (a subdirectory `CLAUDE.md` or `CLAUDE.local.md` and each file it imports, a subdirectory's rules, a rule whose `paths` parse); warn above 70,000 chars for a subdirectory `AGENTS.md`, which a hook attaches; fail above 4 MiB for a root rule loaded at launch | A1, L8, L9, L13 |
 | `AM11` | `.claude/rules` parity | warn when rules files exist and `opencode.json[c]` does not list `.claude/rules` | L6, L10 |
 | `AM12` | names an agent skips | warn for `.claude/AGENTS.md` (Claude Code only), `AGENTS.local.md`, `AGENTS.override.md`, and case variants such as `agents.md` | L1, L7, L11 |
 | `AM13` | cascade inventory | lists every nested instruction file, for the review to read | - |
@@ -158,7 +158,8 @@ checked with Claude Code 2.1.325 (see "Empirical checks").
 | L6 | `.claude/rules/` files load in Claude Code, and do not count against `AGENTS.md` | Claude Code | memory docs, "When Claude Code reads AGENTS.md" | yes |
 | L7 | OpenCode reads every `AGENTS.md` from the working directory up to `$HOME` or the project root, a subdirectory's on read, plus configured `instructions`; never `CLAUDE.md` or `.claude/rules` | OpenCode 2 | `config/plugin/instruction.ts`, `tool/plugin/read.ts` | yes |
 | L8 | "Claude gets the whole of each CLAUDE.md file that loads at launch, as long as the file is 4 MiB or smaller. Claude Code skips a file over 4 MiB" | Claude Code | memory docs, "Auto memory", "How it works" | yes, run (a 63,748-char root file loads whole) |
-| L9 | a subdirectory `CLAUDE.md` or `CLAUDE.local.md` and its imports, a subdirectory's rules file, and a path-scoped rule load on demand under a per-file limit: 40,000 chars with a 200K context window, 150,000–200,000 with 1M; past it Claude receives only the start | Claude Code | memory docs, "Claude ignores the end of my subdirectory CLAUDE.md" | yes; a subdirectory `AGENTS.md` is not in the list |
+| L9 | a subdirectory `CLAUDE.md` or `CLAUDE.local.md` and its imports, a subdirectory's rules file, and a path-scoped rule load on demand under a per-file limit: 40,000 chars with a 200K context window, 150,000–200,000 with 1M; past it Claude receives only the start | Claude Code | memory docs, "Claude ignores the end of my subdirectory CLAUDE.md" | yes, run (in a 1M session: 106,866 chars whole, 159,992 cut) |
+| L13 | a subdirectory `AGENTS.md` reaches the model as an attachment to the Read result, through a hook; past some size only a preview of it arrives | Claude Code | not documented | run only: 69,996 chars whole, 99,948 and 106,866 as a preview; the exact threshold is not known, so `AM10` warns |
 | L10 | an `instructions` entry is a path or a glob, relative patterns searched from the working directory up to the project root | OpenCode 2 | `config/plugin/instruction.ts` | yes |
 | L11 | `AGENTS.local.md` and `AGENTS.override.md` are in neither agent's list of loaded names | both | memory docs; `config/plugin/instruction.ts` | yes (by absence) |
 | L12 | `~/.claude/CLAUDE.md`, the managed `CLAUDE.md`, and `.claude/rules/` do not count, and keep loading alongside `AGENTS.md` | Claude Code | memory docs, "When Claude Code reads AGENTS.md" | yes |
@@ -171,7 +172,8 @@ checked with Claude Code 2.1.325 (see "Empirical checks").
 
 Claude Code 2.1.325, 2026-11-15: one throwaway Git repository per case, each instruction
 file holding a distinct `codeword:`; `claude -p "<list every codeword in your context>"
---model haiku --tools ""` (no tools, so only what loads at launch is seen).
+--model haiku --tools ""` (no tools, so only what loads at launch is seen). Cases 12 and 13 allow the Read tool and ask
+for one file in `sub/`, so that the subdirectory files load on demand.
 
 | Case | Files | Codewords seen | Fact |
 | --- | --- | --- | --- |
@@ -186,6 +188,8 @@ file holding a distinct `codeword:`; `claude -p "<list every codeword in your co
 | 9 | `AGENTS.md` importing a chain of five files | the first four | A2 |
 | 10 | `.claude/AGENTS.md` only | its own | L1 |
 | 11 | a 63,748-char `AGENTS.md`, codeword on the last line | its own | L8 |
+| 12 | `sub/CLAUDE.md` of 106,866 and 159,992 chars, codewords first and last; `--tools Read`, read `sub/notes.txt` | both at 106,866; the first only at 159,992 | L9 (the 1M limit) |
+| 13 | `sub/AGENTS.md` of 59,992 to 106,866 chars, codeword last; same read | the codeword up to 69,996; a hook preview at 99,948 and 106,866 | L13 |
 
 `AM05`–`AM07` judge `AGENTS.md` or, when there is none, the root `CLAUDE.md` (else
 `.claude/CLAUDE.md`) that Claude Code loads in its place.

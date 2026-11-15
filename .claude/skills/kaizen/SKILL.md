@@ -320,7 +320,7 @@ here:
 
 ```
 cd <primary working directory> \
-  && "$HOME/.vite-plus/js_runtime/node/26.13.0/bin/node" "$HOME/.claude/hooks/precompact-kaizen.mjs" --release
+  && node "$HOME/.claude/hooks/precompact-kaizen.mjs" --release
 ```
 
 It prints the token it wrote, and the name carries the directory. Read that line
