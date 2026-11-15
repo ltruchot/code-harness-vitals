@@ -43,6 +43,31 @@ pub fn read_optional(path: &Path) -> Result<Option<String>, Error> {
     }
 }
 
+/// The content of the file at `path`, invalid UTF-8 replaced, or `None` when no file is
+/// there: nothing, a directory, or a path through a regular file.
+///
+/// For files that another file points to (an `@path` import), where the target may be
+/// anything.
+///
+/// # Errors
+///
+/// [`Error::Read`] when the file exists but cannot be read (for example, permission
+/// denied).
+pub fn read_lossy(path: &Path) -> Result<Option<String>, Error> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+        Err(source)
+            if matches!(
+                source.kind(),
+                ErrorKind::NotFound | ErrorKind::NotADirectory | ErrorKind::IsADirectory
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(source) => Err(read_error(path, source)),
+    }
+}
+
 /// Whether anything is at `path`: a file, a directory, or a symbolic link whose target
 /// exists. A dangling link, and a path through a regular file (`file.md/SKILL.md`), count
 /// as nothing.

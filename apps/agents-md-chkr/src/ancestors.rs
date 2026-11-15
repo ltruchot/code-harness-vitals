@@ -123,6 +123,44 @@ fn agents_family(ancestors: &[&Entry]) -> Vec<Finding> {
     }
 }
 
+/// `AM21`, user scope: no managed `CLAUDE.md` gives Claude Code rules that `OpenCode`
+/// never reads.
+pub(crate) fn managed(snapshot: &Snapshot) -> Finding {
+    let Some(managed) = &snapshot.managed else {
+        return Finding::new(
+            "AM21",
+            Verdict::NotApplicable,
+            "/etc/claude-code",
+            "skipped: --repo-only",
+        )
+        .in_user_scope();
+    };
+    managed.first().map_or_else(
+        || {
+            Finding::new(
+                "AM21",
+                Verdict::Pass,
+                "/etc/claude-code",
+                "no managed CLAUDE.md on this machine",
+            )
+            .in_user_scope()
+        },
+        |entry| {
+            user(
+                "AM21",
+                Verdict::Warn,
+                entry,
+                "managed CLAUDE.md: Claude Code loads it in every session on this machine and \
+                 no setting excludes it; OpenCode never reads it",
+            )
+            .with_fix(
+                "keep the repository's AGENTS.md complete without it; if both agents must follow \
+                 these rules, mirror them in OpenCode's global ~/.config/opencode/AGENTS.md",
+            )
+        },
+    )
+}
+
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
@@ -151,6 +189,29 @@ mod tests {
             },
             ..Snapshot::default()
         })
+    }
+
+    #[test]
+    fn a_managed_claude_md_warns_in_user_scope() {
+        let skipped = super::managed(&Snapshot::default());
+        assert_eq!(skipped.verdict(), Verdict::NotApplicable);
+        let clean = super::managed(&Snapshot {
+            managed: Some(Vec::new()),
+            ..Snapshot::default()
+        });
+        assert_eq!(clean.verdict(), Verdict::Pass);
+        let present = super::managed(&Snapshot {
+            managed: Some(vec![file("/etc/claude-code/CLAUDE.md")]),
+            ..Snapshot::default()
+        });
+        assert_eq!(present.verdict(), Verdict::Warn);
+        assert_eq!(present.scope(), Scope::User);
+        assert!(
+            present
+                .fix()
+                .unwrap()
+                .contains("~/.config/opencode/AGENTS.md")
+        );
     }
 
     #[test]

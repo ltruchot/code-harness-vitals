@@ -2,21 +2,28 @@
 //!
 //! - [`audit`] reads the repository once (the `snapshot` boundary), then runs every probe as
 //!   a pure function of that snapshot: the root files (`AM01`–`AM08`), the nested cascade
-//!   (`AM09`–`AM13`), and, in user scope, the parent directories (`AM14`–`AM15`).
+//!   (`AM09`–`AM13`), in user scope the parent directories (`AM14`–`AM15`) and the managed
+//!   `CLAUDE.md` (`AM21`), and what the instruction files say: imports, structure, emphasis,
+//!   references (`AM16`–`AM19`), and the `paths` of rules (`AM20`).
 //! - The non-deterministic half of the gate is the `agents-md-review` skill shipped in
 //!   `skills/`: it runs this binary first, then reviews the content.
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
 mod ancestors;
 mod cascade;
+mod content;
+mod imports;
 mod nested;
 mod probes;
+mod rules;
 mod snapshot;
 
 use std::path::Path;
 
 use vitals_utils::{Error, Report};
 
+pub use content::{BLOCK_CHARS, EMPHASIS_BUDGET, HEADING_FLOOR};
+pub use imports::HOPS;
 pub use probes::{CHARS, GATE, HANDOFF_WINDOW, LINES};
 pub use vitals_utils::Reach;
 

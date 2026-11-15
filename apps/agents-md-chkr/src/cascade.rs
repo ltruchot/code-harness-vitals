@@ -53,6 +53,14 @@ pub(crate) const ANCESTOR_FILES: [&str; 5] = [
     ".claude/AGENTS.md",
 ];
 
+/// The managed `CLAUDE.md` that Claude Code loads in every session on the machine, which no
+/// setting excludes: Linux and WSL, then macOS (memory docs, "Deploy organization-wide
+/// CLAUDE.md").
+pub(crate) const MANAGED_FILES: [&str; 2] = [
+    "/etc/claude-code/CLAUDE.md",
+    "/Library/Application Support/ClaudeCode/CLAUDE.md",
+];
+
 /// The kind of the instruction file at `path`, or `None` when no agent treats it as one.
 pub(crate) fn classify(path: &Path) -> Option<Kind> {
     if in_rules_dir(path) {
