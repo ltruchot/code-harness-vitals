@@ -21,3 +21,6 @@ mise.local.toml
 *.swp
 .DS_Store
 Thumbs.db
+
+# Agent worktrees: full copies of the repository
+.claude/worktrees/

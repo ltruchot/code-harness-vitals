@@ -1,0 +1,22 @@
+{
+  "skills": {
+    "kaizen": {
+      "answers": {
+        "RELEASE_COMMAND": "\"$HOME/.vite-plus/js_runtime/node/26.13.0/bin/node\" \"$HOME/.claude/hooks/precompact-kaizen.mjs\" --release"
+      },
+      "files": {
+        "SKILL.md": "fcdfd315ba8553ad06b5cecf3456197ee5eb592ee554df1c18eac676c70813f0"
+      },
+      "path": ".claude/skills/kaizen",
+      "ref": "0.6.3",
+      "renderedHash": "89058c80a4d04f7e820b04ed180b75836114b301b75ce33cfbf5eee17f0430a0",
+      "secrets": [],
+      "sha": "local:14c55c3d8072c12494b2139f1f67e99cf2c34bd12c2a4f5567e6f10b2e6544df",
+      "skillPath": "skills/kaizen",
+      "source": "qol-mini",
+      "sourceType": "local",
+      "templateHash": "bdaee1db7d984a9bd4529223a2809f2c64a422d58340d76b8d4ab2920c771bd8"
+    }
+  },
+  "version": 1
+}
