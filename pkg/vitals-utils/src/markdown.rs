@@ -106,8 +106,9 @@ pub fn code_spans(line: &str) -> impl Iterator<Item = &str> {
     line.split('`').skip(1).step_by(2)
 }
 
-/// The local targets of every inline Markdown link (`[text](target)`) outside code, with
-/// any `#fragment` or `?query` removed, in file order.
+/// The local targets of every Markdown link outside code, inline (`[text](target)`) or a
+/// reference definition (`[label]: target`), with any `#fragment` or `?query` removed and
+/// `%XX` escapes decoded, in file order.
 #[must_use]
 pub fn link_targets(markdown: &str) -> Vec<String> {
     links(markdown)
@@ -121,19 +122,45 @@ pub fn link_targets(markdown: &str) -> Vec<String> {
 pub fn links(markdown: &str) -> Vec<(usize, String)> {
     prose(markdown)
         .flat_map(|line| {
-            outside_code(line.text)
-                .flat_map(links_in)
+            definition(line.text)
+                .into_iter()
+                .chain(outside_code(line.text).flat_map(links_in))
                 .filter_map(local)
                 .map(move |target| (line.number, target))
         })
         .collect()
 }
 
+/// Inline link targets: from `](` to the `)` that balances it, so `rfc(1).md` stays whole.
 fn links_in(text: &str) -> impl Iterator<Item = &str> {
     text.match_indices("](").filter_map(move |(at, _)| {
         let after = text.get(at.saturating_add(2)..)?;
-        after.find(')').and_then(|end| after.get(..end))
+        after.get(..closing(after)?)
     })
+}
+
+/// The index of the `)` that closes a link target opened just before `text`.
+fn closing(text: &str) -> Option<usize> {
+    let mut depth = 0_usize;
+    for (index, c) in text.char_indices() {
+        match c {
+            ')' if depth == 0 => return Some(index),
+            ')' => depth = depth.saturating_sub(1),
+            '(' => depth = depth.saturating_add(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The target of a reference definition, `[label]: target` indented at most three spaces.
+fn definition(line: &str) -> Option<&str> {
+    let indent = line
+        .len()
+        .saturating_sub(line.trim_start_matches(' ').len());
+    let rest = line.trim_start_matches(' ').strip_prefix('[')?;
+    let (label, after) = rest.split_once("]:")?;
+    (indent <= 3 && !label.is_empty() && !label.starts_with('^')).then_some(after)
 }
 
 /// The path part of a link target when it is a local, relative path.
@@ -145,7 +172,28 @@ fn local(target: &str) -> Option<String> {
     );
     let path = path.split(['#', '?']).next().unwrap_or_default();
     let remote = path.contains("://") || path.starts_with("mailto:") || path.starts_with('/');
-    (!path.is_empty() && !remote).then(|| path.to_owned())
+    (!path.is_empty() && !remote).then(|| decoded(path))
+}
+
+/// `path` with its `%XX` escapes decoded; unchanged when the result is not UTF-8.
+fn decoded(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let escape = (byte == b'%')
+            .then(|| path.get(index.saturating_add(1)..index.saturating_add(3)))
+            .flatten()
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        if let Some(value) = escape {
+            out.push(value);
+            index = index.saturating_add(3);
+        } else {
+            out.push(byte);
+            index = index.saturating_add(1);
+        }
+    }
+    String::from_utf8(out).unwrap_or_else(|_| path.to_owned())
 }
 
 /// `target` resolved from `dir`, both relative to the repository root, without touching
@@ -164,7 +212,7 @@ pub fn resolve(dir: &Path, target: &str) -> Option<PathBuf> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{Region, code_spans, lines, link_targets, prose, resolve, without_comments};
+    use super::{Region, code_spans, lines, link_targets, links, prose, resolve, without_comments};
     use std::path::{Path, PathBuf};
 
     fn regions(text: &str) -> Vec<Region> {
@@ -181,6 +229,26 @@ mod tests {
             link_targets(markdown),
             ["references/guide.md", "api.md", "scripts/run.sh"]
         );
+    }
+
+    #[test]
+    fn targets_balance_parentheses_decode_escapes_and_read_definitions() {
+        let markdown = "[spec](docs/rfc(1).md) and [notes](my%20notes.md) (see [x](a.md)).\n\
+             [ref]: references/missing.md \"Title\"\n   [two]: <two words.md>\n\
+             [^note]: a footnote\n    [code]: indented.md\n`[span]: in-code.md`\n\
+             [bad](%ff.md)\n";
+        assert_eq!(
+            link_targets(markdown),
+            [
+                "docs/rfc(1).md",
+                "my notes.md",
+                "a.md",
+                "references/missing.md",
+                "two words.md",
+                "%ff.md",
+            ]
+        );
+        assert_eq!(links("x\n[r]: b.md\n"), [(2, "b.md".to_owned())]);
     }
 
     #[test]
@@ -245,7 +313,7 @@ mod tests {
         assert_eq!(spans, ["cargo test", "cargo doc"]);
         assert_eq!(code_spans("no code").count(), 0);
         assert_eq!(
-            super::links("a\n[x](y.md) [z](w.md)\n"),
+            links("a\n[x](y.md) [z](w.md)\n"),
             [(2, "y.md".to_owned()), (2, "w.md".to_owned())]
         );
     }
