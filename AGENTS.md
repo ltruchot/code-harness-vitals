@@ -35,6 +35,8 @@
   explaining why when the subject does not. Trailer allowed: `Co-Authored-By` only.
 - Before committing, grep the staged diff and the message for names and emails, and
   remove any match.
+- The pre-commit hook rejects any email-like text on an added line, a test string with
+  `\n` then `@a.md` included: put a space or `- ` before the `@`, or split the literal.
 
 ## Layout
 
