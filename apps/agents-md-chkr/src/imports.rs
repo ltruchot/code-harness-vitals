@@ -23,6 +23,9 @@ pub(crate) type Imported = BTreeMap<PathBuf, Option<String>>;
 pub(crate) struct Import {
     pub(crate) line: usize,
     pub(crate) raw: String,
+    /// A bare word (`@README`): an import only when a file is there, since `@team` is more
+    /// often a mention, so a missing target is not reported.
+    pub(crate) bare: bool,
 }
 
 /// Every import in `text`, in file order.
@@ -31,16 +34,17 @@ pub(crate) fn tokens(text: &str) -> Vec<Import> {
         .flat_map(|line| {
             outside_code(line.text)
                 .flat_map(in_part)
-                .map(move |raw| Import {
+                .map(move |(raw, bare)| Import {
                     line: line.number,
                     raw,
+                    bare,
                 })
         })
         .collect()
 }
 
 /// The imports in a stretch of prose: an `@` at its start or after whitespace.
-fn in_part(part: &str) -> Vec<String> {
+fn in_part(part: &str) -> Vec<(String, bool)> {
     let previous = core::iter::once(' ').chain(part.chars());
     part.char_indices()
         .zip(previous)
@@ -50,9 +54,10 @@ fn in_part(part: &str) -> Vec<String> {
         .collect()
 }
 
-/// The path that opens `rest`, up to the first whitespace not escaped by `\`; `None` for
-/// a quoted path or a word that does not look like a path (`@team`).
-fn path_at(rest: &str) -> Option<String> {
+/// The path that opens `rest`, up to the first whitespace not escaped by `\`, and whether
+/// it is a bare word (`@README`, the memory docs' own example); `None` for a quoted path
+/// or a token that is neither a path nor a word (`@team:`).
+fn path_at(rest: &str) -> Option<(String, bool)> {
     let previous = core::iter::once('\0').chain(rest.chars());
     let end = rest
         .char_indices()
@@ -61,8 +66,19 @@ fn path_at(rest: &str) -> Option<String> {
         .map_or(rest.len(), |((at, _), _)| at);
     let raw = rest.get(..end)?.replace("\\ ", " ");
     let quoted = raw.starts_with(['"', '\'']);
-    let path_like = raw.contains(['/', '.']) || raw.starts_with('~');
-    (!raw.is_empty() && !quoted && path_like).then_some(raw)
+    if raw.is_empty() || quoted {
+        return None;
+    }
+    // A bare word ends at sentence punctuation: `@README,`, `@team.`.
+    let word = raw.trim_end_matches([',', ';', ':', '!', '?', ')', '.']);
+    if word.contains(['/', '.']) || raw.starts_with('~') {
+        return Some((raw, false));
+    }
+    let bare = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_');
+    bare.then(|| (word.to_owned(), true))
 }
 
 /// Where an import points.
@@ -145,7 +161,9 @@ impl Walk<'_> {
         append(&mut self.expansion.text, &markdown::without_comments(text));
         let hop = depth.saturating_add(1);
         for (import, target) in repository_targets(path, text) {
-            let problem = self.follow(&target, hop);
+            let problem = self
+                .follow(&target, hop)
+                .filter(|problem| !(import.bare && *problem == Problem::Missing));
             self.expansion.broken.extend(problem.map(|problem| Broken {
                 file: path.to_path_buf(),
                 import,
@@ -250,8 +268,16 @@ mod tests {
         assert_eq!(raws("@Design\\ Docs/spec.md here"), ["Design Docs/spec.md"]);
         assert_eq!(raws("\"@quoted.md\" @\"quoted.md\""), Vec::<String>::new());
         assert_eq!(
-            raws("`@README.md` user@host @team\n```\n- @code.md\n```\n"),
+            raws("`@README.md` user@host @team's x\n```\n- @code.md\n```\n"),
             Vec::<String>::new()
+        );
+        let bare: Vec<(String, bool)> = tokens("See @README and @docs/a.md\n")
+            .into_iter()
+            .map(|import| (import.raw, import.bare))
+            .collect();
+        assert_eq!(
+            bare,
+            [("README".to_owned(), true), ("docs/a.md".to_owned(), false)]
         );
         let lines: Vec<usize> = tokens("a\n\n- @b.md\n").iter().map(|i| i.line).collect();
         assert_eq!(lines, [3]);
@@ -306,6 +332,15 @@ mod tests {
             ]
         );
         assert_eq!(found.broken.first().unwrap().file, Path::new("h4.md"));
+    }
+
+    #[test]
+    fn a_bare_word_imports_a_file_that_exists_and_is_otherwise_a_mention() {
+        let files = imported(&[("README", Some("# Readme\n")), ("team", None)]);
+        let found = expand(Path::new("AGENTS.md"), "See @README, ask @team\n", &files);
+        assert_eq!(found.loaded, [PathBuf::from("README")]);
+        assert!(found.text.contains("# Readme"));
+        assert_eq!(found.broken, Vec::<Broken>::new());
     }
 
     #[test]

@@ -9,6 +9,7 @@ use vitals_utils::{Error, Reach, fs};
 
 use crate::cascade::{ANCESTOR_FILES, MANAGED_FILES, classify, is_root_file};
 use crate::imports::{self, Imported};
+use crate::rules;
 
 /// An instruction file: its content and, when it is a symbolic link, its target as written.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -51,6 +52,10 @@ pub(crate) struct Snapshot {
     /// The managed `CLAUDE.md` files on this machine; `None` when the run is
     /// repository-only.
     pub(crate) managed: Option<Vec<Entry>>,
+    /// The directories that a rule's `paths` pattern starts with (`dist` for `dist/**`),
+    /// that exist on disk, and that the walk hides (ignored): Claude Code still loads the
+    /// rule there.
+    pub(crate) hidden: BTreeSet<PathBuf>,
 }
 
 pub(crate) fn read(root: &Path, reach: Reach) -> Result<Snapshot, Error> {
@@ -71,9 +76,22 @@ pub(crate) fn read(root: &Path, reach: Reach) -> Result<Snapshot, Error> {
         imported: Imported::new(),
         files,
         managed: user.then(managed).transpose()?,
+        hidden: BTreeSet::new(),
     };
     snapshot.imported = imported(root, &snapshot)?;
+    snapshot.hidden = hidden(root, &snapshot)?;
     Ok(snapshot)
+}
+
+fn hidden(root: &Path, snapshot: &Snapshot) -> Result<BTreeSet<PathBuf>, Error> {
+    let mut found = BTreeSet::new();
+    for base in rules::bases(&snapshot.nested) {
+        let walked = snapshot.files.iter().any(|file| file.starts_with(&base));
+        if !walked && fs::exists(&root.join(&base).join("."))? {
+            found.insert(base);
+        }
+    }
+    Ok(found)
 }
 
 /// Reads every file reachable through `@path` imports from the root and nested

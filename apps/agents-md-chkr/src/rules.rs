@@ -30,7 +30,7 @@ pub(crate) fn finding(snapshot: &Snapshot) -> Vec<Finding> {
     }
     let found = rules
         .iter()
-        .filter_map(|rule| judge(rule, &snapshot.files))
+        .filter_map(|rule| judge(rule, snapshot))
         .collect();
     let noun = if rules.len() == 1 { "file" } else { "files" };
     let pass = format!(
@@ -43,7 +43,7 @@ pub(crate) fn finding(snapshot: &Snapshot) -> Vec<Finding> {
     )
 }
 
-fn judge(rule: &Entry, files: &[PathBuf]) -> Option<Finding> {
+fn judge(rule: &Entry, snapshot: &Snapshot) -> Option<Finding> {
     let text = rule.file.content.as_deref()?;
     let warn = |message: String, fix: &str| {
         Finding::new("AM20", Verdict::Warn, &rule.path, message).with_fix(fix)
@@ -69,7 +69,10 @@ fn judge(rule: &Entry, files: &[PathBuf]) -> Option<Finding> {
     let scope = scope_of(&rule.path);
     let dead: Vec<String> = patterns
         .into_iter()
-        .filter(|pattern| !matches_any(pattern, scope, files))
+        .filter(|pattern| {
+            !matches_any(pattern, scope, &snapshot.files)
+                && !snapshot.hidden.contains(&base(scope, pattern))
+        })
         .collect();
     (!dead.is_empty()).then(|| dead_patterns(rule, field.line, &dead))
 }
@@ -100,6 +103,50 @@ fn scope_of(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new(""))
 }
 
+/// The literal directory that `pattern` starts with, relative to the repository root:
+/// `scope/dist` for `dist/**/*.js`; `scope` itself when the pattern opens with a glob.
+fn base(scope: &Path, pattern: &str) -> PathBuf {
+    let literal: PathBuf = normalized(pattern)
+        .split('/')
+        .take_while(|part| !part.contains(['*', '?', '[', '{']))
+        .collect();
+    // The last literal part may name a file (`docs/a.md`): keep the directories only.
+    let dirs = if normalized(pattern).contains(['*', '?', '[', '{']) {
+        literal
+    } else {
+        literal
+            .parent()
+            .map_or_else(PathBuf::new, Path::to_path_buf)
+    };
+    scope.join(dirs)
+}
+
+/// Every directory that a `paths` pattern of the rules in `nested` starts with.
+pub(crate) fn bases(nested: &[Entry]) -> Vec<PathBuf> {
+    nested
+        .iter()
+        .filter(|entry| classify(&entry.path) == Some(Kind::Rule))
+        .filter_map(|entry| {
+            let text = entry.file.content.as_deref()?;
+            let patterns = frontmatter::read(text).items("paths")?;
+            let scope = scope_of(&entry.path);
+            Some(
+                patterns
+                    .iter()
+                    .map(|pattern| base(scope, pattern))
+                    .filter(|dir| dir != scope)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .flatten()
+        .collect()
+}
+
+/// `pattern` without a leading `./`.
+fn normalized(pattern: &str) -> &str {
+    pattern.strip_prefix("./").unwrap_or(pattern)
+}
+
 fn matches_any(pattern: &str, scope: &Path, files: &[PathBuf]) -> bool {
     matcher(pattern).is_some_and(|glob| {
         files
@@ -112,7 +159,7 @@ fn matches_any(pattern: &str, scope: &Path, files: &[PathBuf]) -> bool {
 /// `pattern` as Claude Code's examples use it: `*` stops at `/`, `**` crosses it, braces
 /// expand. `None` when it is not a valid glob.
 fn matcher(pattern: &str) -> Option<GlobMatcher> {
-    GlobBuilder::new(pattern)
+    GlobBuilder::new(normalized(pattern))
         .literal_separator(true)
         .build()
         .ok()
@@ -122,8 +169,9 @@ fn matcher(pattern: &str) -> Option<GlobMatcher> {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::finding;
+    use super::{bases, finding};
     use crate::snapshot::{Entry, RulesFile, Snapshot};
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
     use vitals_utils::Verdict;
 
@@ -189,6 +237,37 @@ mod tests {
         assert!(found[0].1.contains("for it"));
         let clean = run(vec![rule(".claude/rules/all.md", "# Everywhere\n")]);
         assert_eq!(clean[0].0, Verdict::Pass);
+    }
+
+    #[test]
+    fn dot_slash_and_ignored_directories_are_not_dead() {
+        let rules = vec![
+            rule(
+                ".claude/rules/a.md",
+                "---\npaths: [\"./src/**\", \"dist/**/*.js\", \"src/**/*.{ts,tsx}\"]\n---\n",
+            ),
+            rule(
+                "pkg/web/.claude/rules/b.md",
+                "---\npaths: build/out.txt, *.rs\n---\n",
+            ),
+        ];
+        assert_eq!(
+            bases(&rules),
+            [
+                PathBuf::from("src"),
+                PathBuf::from("dist"),
+                PathBuf::from("src"),
+                PathBuf::from("pkg/web/build"),
+            ]
+        );
+        let found = finding(&Snapshot {
+            nested: rules,
+            files: vec![PathBuf::from("src/a.ts"), PathBuf::from("pkg/web/x.rs")],
+            hidden: BTreeSet::from([PathBuf::from("dist"), PathBuf::from("pkg/web/build")]),
+            ..Snapshot::default()
+        });
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].verdict(), Verdict::Pass, "{}", found[0].message());
     }
 
     #[test]
