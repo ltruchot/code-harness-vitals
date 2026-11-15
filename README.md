@@ -105,7 +105,7 @@ never fail the gate, the skill roots above the repository
 | `SK01` | project skills exist | warn: none in any skill root |
 | `SK02` | both agents reach each skill | warn: a skill only in `.agents/skills/` or `.opencode/skill(s)/`, which Claude Code never loads |
 | `SK03` | one copy per name | warn: two roots hold the same skill name with different content |
-| `SK04` | layout | warn: a `*.md` file directly in a skill root (OpenCode only), or `skill.md` instead of `SKILL.md` (neither agent) |
+| `SK04` | layout | warn: a `*.md` file directly in a skill root (OpenCode only), `skill.md` instead of `SKILL.md` (neither agent), or a `SKILL.md` one folder too deep (OpenCode only) |
 | `SK05` | nested skill roots | warn: a skill root below the repository root, which OpenCode loads only in a session started there |
 | `SK06` | frontmatter | fail: no `---` on line 1, never closed, or an unquoted value YAML rejects (`: `, `[x] text`, a leading `` ` `` or `@`) |
 | `SK07` | description | fail: missing or not a string, unless `disable-model-invocation: true` |

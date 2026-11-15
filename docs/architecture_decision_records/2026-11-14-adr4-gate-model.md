@@ -236,7 +236,7 @@ The [Agent Skills spec](https://agentskills.io/specification) adds the portable 
 | `SK01` | project skills exist | warn when no skill is found in any root, at the root or below; the per-skill probes are then `n/a` |
 | `SK02` | both agents reach each skill | warn for a skill only in `.agents/skills/`, `.opencode/skills/`, or `.opencode/skill/`: Claude Code never loads it |
 | `SK03` | one copy per name | warn when two roots of the same directory hold a skill of the same name with different `SKILL.md` content: Claude Code reads the `.claude` copy, OpenCode keeps one by directory id |
-| `SK04` | layout both agents load | warn for a `*.md` file directly in a skill root (OpenCode loads it as a skill, Claude Code does not) and for a skill directory whose only `SKILL.md` is a case variant (`skill.md`: neither agent loads it) |
+| `SK04` | layout both agents load | warn for a `*.md` file directly in a skill root (OpenCode loads it as a skill, Claude Code does not), for a skill directory whose only `SKILL.md` is a case variant (`skill.md`: neither agent loads it), and for a `SKILL.md` nested below a root folder that holds none (`<group>/<name>/SKILL.md`: OpenCode loads it, O5; Claude Code documents only `<name>/SKILL.md`, C17) |
 | `SK05` | nested skill roots | warn for each skill root below the repository root: Claude Code loads it once it works there, OpenCode only in a session started inside that subtree |
 | `SK06` | frontmatter parses | fail when `SKILL.md` does not open with `---` on line 1 or never closes it; fail when a top-level unquoted value holds `: `, starts with `[x] text`, or starts with `` ` `` or `@`, which YAML rejects: Claude Code then loads the skill with no fields; OpenCode repairs a value that holds `:` or starts with `[x] text` and skips the skill otherwise |
 | `SK07` | a description to match | fail when `description` is missing, empty, or not a string, unless `disable-model-invocation` is true: OpenCode never lists the skill (or skips it), Claude Code matches on the first body line |
@@ -244,13 +244,17 @@ The [Agent Skills spec](https://agentskills.io/specification) adds the portable 
 | `SK09` | trigger text OpenCode reads | warn when `when_to_use` is set: OpenCode never reads it, so its trigger phrases reach Claude Code only |
 | `SK10` | name | fail for a directory or `name` that Claude Code reserves (`synced` in any case, `anthropic-skills…`), and for a `name` that is not a string (OpenCode skips the skill); warn for a name outside the spec's charset, and for a `name` that differs from the directory (Claude Code invokes `/name`, OpenCode the directory id) |
 | `SK11` | body budget | warn above 500 lines (Claude Code docs and the spec) |
-| `SK12` | references resolve | fail for each relative Markdown link in `SKILL.md`, outside code, whose target does not exist; links that leave the repository are not judged |
+| `SK12` | references resolve | fail for each relative Markdown link in `SKILL.md`, outside code, whose target does not exist; links that leave the repository are not judged. A link that leaves a symbolic-link skill folder passes when it resolves from where the folder is linked or from where it really is; behind a folder outside the repository it is not judged |
 | `SK13` | skill inventory | lists every skill with its root, for the review to read |
 | `SK14` | user scope: skill roots only OpenCode reads | warn for `.claude/skills/`, `.agents/skills/`, `.opencode/skill(s)/` in a parent directory of the repository (OpenCode loads them in every session here, Claude Code stops at the repository root), and for `~/.agents/skills/` and `~/.config/opencode/skill(s)/` (personal skills Claude Code never reads) |
-| `SK15` | user scope: personal skills that shadow project skills | warn for each project skill whose name is also in `~/.claude/skills/`: Claude Code runs the personal copy, OpenCode the project one |
+| `SK15` | user scope: personal skills that shadow project skills | warn for each skill in the repository's `.claude/skills/` whose name is also in `~/.claude/skills/`: Claude Code runs the personal copy, OpenCode the project one |
 
 The tree is the one `agents-md` walks (hidden files, `.gitignore` honored, `.git/` and
-`.claude/worktrees/` skipped); symbolic-link skill folders are followed. `SK07`–`SK10` skip
+`.claude/worktrees/` skipped), plus every skill root read whole with no ignore rule, as
+both agents read it: the four at the repository root, each root the walk crosses, and a
+root behind a symbolic link (`.claude`, or `.claude/skills` itself). Symbolic-link skill
+folders are followed. Roots outside the repository are read the same way, so a home
+directory whose `.gitignore` holds `*` hides none of them. `SK07`–`SK10` skip
 a skill that `SK06` reports without frontmatter. The frontmatter is read by a line scanner
 for top-level keys and their scalar values, not by a YAML parser: it decides only the cases
 above, so no YAML crate is admitted (ADR 3). `SK14` and `SK15` are user scope: labeled,

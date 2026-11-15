@@ -119,36 +119,44 @@ impl Place {
     }
 }
 
-/// The skill whose `SKILL.md` is at `path`, if any.
-pub(crate) fn skill_place(path: &Path) -> Option<Place> {
-    let located = locate(path)?;
-    match located.rest.as_slice() {
-        [name, file] if file == SKILL_MD => Some(Place {
-            scope: located.scope,
-            root: located.root,
-            name: name.clone(),
-        }),
+/// How a path below a skill root makes a skill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Shape {
+    /// `<name>/SKILL.md`.
+    SkillMd,
+    /// `<name>` listed as a file: a skill only when it is a symbolic-link folder that holds
+    /// `SKILL.md`, which only the disk can tell.
+    Folder,
+}
+
+/// The skill name and shape of a path, from its components below a skill root.
+pub(crate) fn shape<S: AsRef<str>>(rest: &[S]) -> Option<(&str, Shape)> {
+    match rest {
+        [name, file] if file.as_ref() == SKILL_MD => Some((name.as_ref(), Shape::SkillMd)),
+        [name] => Some((name.as_ref(), Shape::Folder)),
         _ => None,
     }
 }
 
-/// The skill folder at `path` (`<root>/<name>`), for a folder that is a symbolic link.
-pub(crate) fn folder_place(path: &Path) -> Option<Place> {
+/// The skill that `path` (relative to the repository root) can make, and its shape.
+pub(crate) fn place(path: &Path) -> Option<(Place, Shape)> {
     let located = locate(path)?;
-    match located.rest.as_slice() {
-        [name] => Some(Place {
+    let (name, shape) = shape(&located.rest)?;
+    let name = name.to_owned();
+    Some((
+        Place {
             scope: located.scope,
             root: located.root,
-            name: name.clone(),
-        }),
-        _ => None,
-    }
+            name,
+        },
+        shape,
+    ))
 }
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{Root, folder_place, locate, skill_place};
+    use super::{Root, SKILL_MD, Shape, locate, place, shape};
     use std::path::{Path, PathBuf};
     use vitals_utils::markers::SKILL_ROOTS;
 
@@ -176,26 +184,26 @@ mod tests {
     }
 
     #[test]
-    fn skill_and_folder_places_need_their_exact_shape() {
-        let place = skill_place(Path::new(".claude/skills/kaizen/SKILL.md")).unwrap();
+    fn places_need_their_exact_shape() {
+        let (place, found) = place(Path::new(".claude/skills/kaizen/SKILL.md")).unwrap();
         assert_eq!(place.name, "kaizen");
+        assert_eq!(found, Shape::SkillMd);
         assert_eq!(
             place.skill_md(),
             PathBuf::from(".claude/skills/kaizen/SKILL.md")
         );
         assert_eq!(
-            skill_place(Path::new(".claude/skills/kaizen/skill.md")),
+            super::place(Path::new(".claude/skills/kaizen/skill.md")),
             None
         );
-        assert_eq!(skill_place(Path::new(".claude/skills/a/b/SKILL.md")), None);
-        assert_eq!(
-            folder_place(Path::new("pkg/.claude/skills/shared"))
-                .unwrap()
-                .dir(),
-            PathBuf::from("pkg/.claude/skills/shared")
-        );
-        assert_eq!(folder_place(Path::new(".claude/skills/a/b")), None);
-        assert_eq!(folder_place(Path::new("README.md")), None);
+        assert_eq!(super::place(Path::new(".claude/skills/a/b/SKILL.md")), None);
+        let (folder, linked) = super::place(Path::new("pkg/.claude/skills/shared")).unwrap();
+        assert_eq!(folder.dir(), PathBuf::from("pkg/.claude/skills/shared"));
+        assert_eq!(linked, Shape::Folder);
+        assert_eq!(super::place(Path::new(".claude/skills/a/b")), None);
+        assert_eq!(super::place(Path::new("README.md")), None);
+        assert_eq!(shape(&["x", SKILL_MD]), Some(("x", Shape::SkillMd)));
+        assert_eq!(shape::<&str>(&[]), None);
     }
 
     #[cfg(unix)]
