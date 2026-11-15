@@ -131,6 +131,9 @@ different rules with nothing in the repository to show it.
 | `AM14` | user scope: `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` in a parent directory (except `~/.claude/CLAUDE.md`) | warn: Claude Code loads it and, without a bridge in the repository, skips every `AGENTS.md` |
 | `AM15` | user scope: `AGENTS.md`, `.claude/AGENTS.md` in a parent directory | warn: rules that teammates and CI do not have |
 
+`AM05`–`AM07` judge `AGENTS.md` or, when there is none, the root `CLAUDE.md` (else
+`.claude/CLAUDE.md`) that Claude Code loads in its place.
+
 The nested walk is the tree an agent sees: hidden files included, `.gitignore` honored,
 `.git/` and `.claude/worktrees/` skipped. User-scope probes (`AM14`, `AM15`) read every
 parent directory up to `/` and the home directory; they are labeled `(user scope)`, never

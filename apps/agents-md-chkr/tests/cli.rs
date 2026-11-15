@@ -90,6 +90,26 @@ fn a_repository_with_only_claude_md_fails_with_a_rename_fix() {
 }
 
 #[test]
+fn without_agents_md_the_budgets_judge_the_claude_md_that_loads() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = format!("{HANDOFF}{}", "- rule\n".repeat(250));
+    write(dir.path(), "CLAUDE.md", &long);
+    write(dir.path(), "TODO.md", "# TODO\n");
+    chkr()
+        .args(["--repo-only"])
+        .arg(dir.path())
+        .assert()
+        .code(1)
+        .stdout(contains(
+            "[warn] AM05 CLAUDE.md: 253 lines (warn above 200, fail above 500)",
+        ))
+        .stdout(contains("[pass] AM06 CLAUDE.md"))
+        .stdout(contains(
+            "[pass] AM07 CLAUDE.md: opens by sending each session to TODO.md",
+        ));
+}
+
+#[test]
 fn an_empty_directory_fails_on_presence() {
     let dir = tempfile::tempdir().unwrap();
     chkr()

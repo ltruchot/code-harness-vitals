@@ -185,39 +185,67 @@ fn local_file(snapshot: &Snapshot) -> Finding {
     }
 }
 
-fn budget(probe: &'static str, measure: usize, unit: &str, limit: Budget) -> Finding {
+/// The root rules file that the budget and handoff probes judge: `AGENTS.md`, or, when
+/// there is none, the `CLAUDE.md` that Claude Code loads in its place.
+fn subject(snapshot: &Snapshot) -> Option<(&'static str, &str)> {
+    snapshot
+        .agents_md
+        .as_deref()
+        .map(|text| (AGENTS_MD, text))
+        .or_else(|| {
+            [
+                (ROOT_CLAUDE_MD.path, &snapshot.claude_md),
+                (DOT_CLAUDE_MD.path, &snapshot.dot_claude_md),
+            ]
+            .into_iter()
+            .find_map(|(path, file)| file.content.as_deref().map(|text| (path, text)))
+        })
+}
+
+fn no_subject(probe: &'static str) -> Finding {
+    Finding::new(
+        probe,
+        Verdict::NotApplicable,
+        AGENTS_MD,
+        "no root rules file to judge",
+    )
+}
+
+/// `measured` is the judged file and its size in `unit`.
+fn budget(probe: &'static str, measured: (&str, usize), unit: &str, limit: Budget) -> Finding {
+    let (path, measure) = measured;
     let verdict = limit.verdict(measure);
-    let finding = Finding::new(probe, verdict, AGENTS_MD, limit.describe(measure, unit));
+    let finding = Finding::new(probe, verdict, path, limit.describe(measure, unit));
     if verdict > Verdict::Pass {
         finding.with_fix(
             "keep what every session needs; move workflow-specific sections into skills and \
-             detail into docs that AGENTS.md links to",
+             detail into docs that the rules file links to",
         )
     } else {
         finding
     }
 }
 
-/// `AM05`: `AGENTS.md` is within the [`LINES`] budget.
+/// `AM05`: the root rules file is within the [`LINES`] budget.
 fn lines(snapshot: &Snapshot) -> Finding {
-    snapshot.agents_md.as_deref().map_or_else(
-        || not_applicable("AM05", AGENTS_MD),
-        |text| budget("AM05", TextSize::of(text).lines(), "lines", LINES),
+    subject(snapshot).map_or_else(
+        || no_subject("AM05"),
+        |(path, text)| budget("AM05", (path, TextSize::of(text).lines()), "lines", LINES),
     )
 }
 
-/// `AM06`: `AGENTS.md` is within the [`CHARS`] budget.
+/// `AM06`: the root rules file is within the [`CHARS`] budget.
 fn chars(snapshot: &Snapshot) -> Finding {
-    snapshot.agents_md.as_deref().map_or_else(
-        || not_applicable("AM06", AGENTS_MD),
-        |text| budget("AM06", TextSize::of(text).chars(), "chars", CHARS),
+    subject(snapshot).map_or_else(
+        || no_subject("AM06"),
+        |(path, text)| budget("AM06", (path, TextSize::of(text).chars()), "chars", CHARS),
     )
 }
 
 /// `AM07`: a session that starts after `/clear` or a compaction is sent to `TODO.md` first.
 fn handoff(snapshot: &Snapshot) -> Finding {
-    let Some(text) = snapshot.agents_md.as_deref() else {
-        return not_applicable("AM07", AGENTS_MD);
+    let Some((path, text)) = subject(snapshot) else {
+        return no_subject("AM07");
     };
     let named = text
         .lines()
@@ -228,7 +256,7 @@ fn handoff(snapshot: &Snapshot) -> Finding {
             return Finding::new(
                 "AM07",
                 Verdict::Pass,
-                AGENTS_MD,
+                path,
                 "opens by sending each session to TODO.md",
             );
         }
@@ -236,12 +264,12 @@ fn handoff(snapshot: &Snapshot) -> Finding {
             "AM07",
             Verdict::Warn,
             "TODO.md",
-            "AGENTS.md sends each session to TODO.md, which does not exist",
+            format!("{path} sends each session to TODO.md, which does not exist"),
         ),
         (false, _) => Finding::new(
             "AM07",
             Verdict::Warn,
-            AGENTS_MD,
+            path,
             format!(
                 "names no TODO.md handoff in its first {HANDOFF_WINDOW} lines: a session \
                  after /clear or a compaction starts cold"
@@ -249,7 +277,7 @@ fn handoff(snapshot: &Snapshot) -> Finding {
         ),
     };
     finding.with_fix(format!(
-        "open AGENTS.md with a line that sends each session to TODO.md (where the last \
+        "open {path} with a line that sends each session to TODO.md (where the last \
          session stopped, what is left) and keep TODO.md current; the qol-mini kaizen skill \
          sets both up: {QOL_MINI}"
     ))
@@ -356,6 +384,12 @@ mod tests {
         assert_eq!(verdict(&Snapshot::default(), "AM01"), Verdict::Fail);
         assert_eq!(report.outcome(), Outcome::Failed);
         let skipped = ["AM02", "AM03", "AM04", "AM05", "AM06", "AM07"];
+        let budget = report
+            .findings()
+            .iter()
+            .find(|f| f.probe() == "AM05")
+            .unwrap();
+        assert_eq!(budget.message(), "no root rules file to judge");
         assert!(
             skipped
                 .iter()
@@ -373,6 +407,44 @@ mod tests {
         let presence = report.findings().first().unwrap();
         assert_eq!(presence.verdict(), Verdict::Fail);
         assert!(presence.fix().unwrap().starts_with("rename CLAUDE.md"));
+    }
+
+    #[test]
+    fn without_agents_md_the_budgets_and_handoff_judge_the_claude_md_that_loads() {
+        let long = format!("> read `TODO.md` first\n{}", "rule\n".repeat(300));
+        let root = Snapshot {
+            claude_md: content(&long),
+            todo_md: true,
+            ..Snapshot::default()
+        };
+        let report = check(&root);
+        let of = |probe| {
+            report
+                .findings()
+                .iter()
+                .find(|f| f.probe() == probe)
+                .unwrap()
+        };
+        assert_eq!(of("AM05").verdict(), Verdict::Warn);
+        assert_eq!(of("AM05").evidence(), std::path::Path::new("CLAUDE.md"));
+        assert_eq!(of("AM06").verdict(), Verdict::Pass);
+        assert_eq!(of("AM07").verdict(), Verdict::Pass);
+        assert_eq!(of("AM02").verdict(), Verdict::NotApplicable);
+        let dot = Snapshot {
+            dot_claude_md: content("# Rules\n"),
+            ..Snapshot::default()
+        };
+        let dot_report = check(&dot);
+        let handoff = dot_report
+            .findings()
+            .iter()
+            .find(|f| f.probe() == "AM07")
+            .unwrap();
+        assert_eq!(
+            handoff.evidence(),
+            std::path::Path::new(".claude/CLAUDE.md")
+        );
+        assert!(handoff.fix().unwrap().starts_with("open .claude/CLAUDE.md"));
     }
 
     #[test]
