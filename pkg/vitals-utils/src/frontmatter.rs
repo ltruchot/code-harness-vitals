@@ -3,9 +3,9 @@
 //!
 //! This is not a YAML parser (ADR 4, "The skills gate"). It finds the top-level keys of the
 //! block between the opening `---` (first line) and the closing `---`, reads each key's
-//! scalar value (plain, quoted, or block) or sequence of scalars, and flags the two
-//! plain-value mistakes that YAML rejects: a `: ` inside the value, and a value that opens
-//! with a reserved indicator or a flow collection followed by text. Claude Code then loads
+//! scalar value (plain, quoted, or block) or sequence of scalars, and flags the plain-value
+//! mistakes that YAML rejects: a `: ` on any line of the value, and a value that opens with
+//! a reserved indicator or a flow collection followed by text. Claude Code then loads
 //! a skill with no fields; `OpenCode` (`config/markdown.ts`) retries values that contain
 //! `:` or start with `[x] text` as block scalars, and skips the skill otherwise.
 
@@ -37,8 +37,9 @@ pub enum Mistake {
     Colon,
     /// `[x] text`: `OpenCode` repairs it.
     TaggedText,
-    /// Opens with `` ` `` or `@`, which YAML reserves: `OpenCode` repairs it only when the
-    /// value also holds a `:`.
+    /// Opens with an indicator that cannot start a plain value: `` ` `` or `@` (reserved),
+    /// `*` (an alias), `!` (a tag), or `%` (a directive). `OpenCode` repairs it only when
+    /// the value also holds a `:`.
     Reserved {
         /// Whether the value also holds a `:`, so that `OpenCode` repairs it.
         repaired: bool,
@@ -61,7 +62,9 @@ impl Mistake {
         match self {
             Self::Colon => "holds an unquoted `: `",
             Self::TaggedText => "opens with `[...]` followed by text",
-            Self::Reserved { .. } => "opens with `` ` `` or `@`, which YAML reserves",
+            Self::Reserved { .. } => {
+                "opens with `` ` ``, `@`, `*`, `!`, or `%`, which YAML does not read as text"
+            }
         }
     }
 }
@@ -219,33 +222,58 @@ impl Entry<'_> {
 
     fn value(&self) -> (Value, Option<Mistake>) {
         let inline = self.inline;
-        if inline.is_empty() {
+        if inline.is_empty() || inline.starts_with('#') {
             return (self.nested(), None);
         }
         if inline.starts_with(['|', '>']) {
             return (Value::Text(self.block(inline)), None);
         }
-        if let Some(quoted) = quoted(inline) {
+        // A quoted scalar may span lines, and `#` inside it is text, not a comment.
+        let spanned = core::iter::once(inline)
+            .chain(self.rest.iter().map(|line| line.trim()))
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if let Some(quoted) = quoted(&spanned) {
             return (Value::Text(quoted), None);
         }
         if inline.starts_with(['[', '{']) {
             return flow(inline);
         }
-        let text = core::iter::once(plain(inline))
+        let text = core::iter::once(inline)
             .chain(self.continuation())
+            .map(plain)
             .collect::<Vec<_>>()
             .join(" ");
-        (Value::Text(text), plain_mistake(plain(inline)))
+        let mistake = plain_mistake(&text);
+        (Value::Text(text), mistake)
     }
 
-    /// A block scalar: `|` keeps line breaks, `>` folds them into spaces.
+    /// A block scalar: its lines indented below the key, the common indentation removed;
+    /// `|` keeps line breaks, `>` folds them into spaces. Blank lines and lines that start
+    /// with `#` are content.
     fn block(&self, indicator: &str) -> String {
-        let separator = if indicator.starts_with('|') {
-            "\n"
+        let lines: Vec<&str> = self
+            .rest
+            .iter()
+            .take_while(|line| line.trim().is_empty() || line.starts_with([' ', '\t']))
+            .copied()
+            .collect();
+        let indent = lines
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.len().saturating_sub(line.trim_start().len()))
+            .min()
+            .unwrap_or(0);
+        let body = lines
+            .iter()
+            .map(|line| line.get(indent..).unwrap_or_default().trim_end());
+        let text = if indicator.starts_with('|') {
+            body.collect::<Vec<_>>().join("\n")
         } else {
-            " "
+            fold(body)
         };
-        self.continuation().collect::<Vec<_>>().join(separator)
+        text.trim_end().to_owned()
     }
 
     /// A value on the lines below the key: a list, a map, or a multi-line plain scalar.
@@ -266,17 +294,33 @@ impl Entry<'_> {
     }
 }
 
-/// A single- or double-quoted scalar on one line, unescaped.
-fn quoted(inline: &str) -> Option<String> {
-    let quote = inline.chars().next().filter(|c| *c == '"' || *c == '\'')?;
-    let inner = inline.strip_prefix(quote)?;
-    let end = inner.rfind(quote).unwrap_or(inner.len());
-    let body = inner.get(..end).unwrap_or(inner);
-    Some(if quote == '"' {
-        body.replace("\\\"", "\"").replace("\\\\", "\\")
-    } else {
-        body.replace("''", "'")
-    })
+/// Folded lines: joined by spaces, a blank line kept as a line break.
+fn fold<'a>(lines: impl Iterator<Item = &'a str>) -> String {
+    lines
+        .map(|line| if line.is_empty() { "\n" } else { line })
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace(" \n ", "\n")
+}
+
+/// A single- or double-quoted scalar, unescaped, up to its closing quote: what follows
+/// it (a ` # comment`) is not part of it. An unclosed quote runs to the end of `text`.
+fn quoted(text: &str) -> Option<String> {
+    let quote = text.chars().next().filter(|c| *c == '"' || *c == '\'')?;
+    let mut chars = text.get(1..)?.chars().peekable();
+    let mut body = String::new();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            ('"', '\\') => body.extend(chars.next()),
+            ('\'', '\'') if chars.peek() == Some(&'\'') => {
+                body.push('\'');
+                chars.next();
+            }
+            _ if c == quote => break,
+            _ => body.push(c),
+        }
+    }
+    Some(body)
 }
 
 /// `[a, b]` or `{a: b}` is a collection; `[Tag] text` is a YAML error that `OpenCode`
@@ -319,7 +363,7 @@ fn plain(inline: &str) -> &str {
 
 fn plain_mistake(value: &str) -> Option<Mistake> {
     let colon = value.contains(": ") || value.ends_with(':');
-    if value.starts_with(['`', '@']) {
+    if value.starts_with(['`', '@', '*', '!', '%']) {
         Some(Mistake::Reserved {
             repaired: value.contains(':'),
         })
@@ -416,6 +460,53 @@ mod tests {
         assert!(Mistake::Colon.repaired());
         assert!(!Mistake::Reserved { repaired: false }.repaired());
         assert!(Mistake::TaggedText.reason().contains("[...]"));
+    }
+
+    #[test]
+    fn mistakes_on_a_continuation_line_and_other_indicators() {
+        let found = fields(
+            "---\ndescription: Deploy the app.\n  Use when: asked to ship\n\
+             alias: *Important* deploy skill\ntag: !note text\ndirective: %x\n\
+             fine: Deploy.\n  Use when asked # to: ship\nnull: # nothing\n---\n",
+        );
+        let mistake = |key| found.field(key).unwrap().mistake;
+        assert_eq!(mistake("description"), Some(Mistake::Colon));
+        assert_eq!(
+            found.text("description"),
+            Some("Deploy the app. Use when: asked to ship")
+        );
+        for key in ["alias", "tag", "directive"] {
+            assert_eq!(
+                mistake(key),
+                Some(Mistake::Reserved { repaired: false }),
+                "{key}"
+            );
+        }
+        assert_eq!(mistake("fine"), None);
+        assert_eq!(found.text("fine"), Some("Deploy. Use when asked"));
+        assert_eq!(found.field("null").unwrap().value, Value::Empty);
+    }
+
+    #[test]
+    fn quoted_values_end_at_their_closing_quote_and_may_span_lines() {
+        let found = fields(
+            "---\na: 'Deploy' # it's fine\nb: \"x \\\"y\\\" z\" # \"c\"\n\
+             c: \"Long text\n  # kept\n  that ends here.\"\nd: 'it''s'\n---\n",
+        );
+        assert_eq!(found.text("a"), Some("Deploy"));
+        assert_eq!(found.text("b"), Some("x \"y\" z"));
+        assert_eq!(found.text("c"), Some("Long text # kept that ends here."));
+        assert_eq!(found.text("d"), Some("it's"));
+    }
+
+    #[test]
+    fn block_scalars_keep_blank_and_hash_lines() {
+        let found = fields(
+            "---\nliteral: |\n  one\n\n  # two\n    three\n# a comment\n\
+             folded: >\n  a\n  b\n\n  c\n---\n",
+        );
+        assert_eq!(found.text("literal"), Some("one\n\n# two\n  three"));
+        assert_eq!(found.text("folded"), Some("a b\nc"));
     }
 
     #[test]

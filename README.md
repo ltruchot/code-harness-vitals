@@ -167,7 +167,7 @@ whose facts `C`, `S`, and `O` the Source column cites).
 | `SK03` | one copy per name | warn: two roots hold the same skill name with different content | C5, O10 |
 | `SK04` | layout | warn: a `*.md` file directly in a skill root (OpenCode only), `skill.md` instead of `SKILL.md` (neither agent), or a `SKILL.md` one folder too deep (OpenCode only) | C16, C17, O5 |
 | `SK05` | nested skill roots | warn: a skill root below the repository root, which OpenCode loads only in a session started there | C4, O4 |
-| `SK06` | frontmatter | fail: no `---` on line 1, never closed, or an unquoted value YAML rejects (`: `, `[x] text`, a leading `` ` `` or `@`) | C8, C9, [spec] S4, O8 |
+| `SK06` | frontmatter | fail: no `---` on line 1, never closed, or an unquoted value YAML rejects (`: `, `[x] text`, a leading `` ` ``, `@`, `*`, `!`, or `%`) | C8, C9, [spec] S4, O8 |
 | `SK07` | description | fail: missing or not a string, unless `disable-model-invocation: true` | C10, O7, O9 |
 | `SK08` | description length | warn above 1,024 chars, fail above 1,536 (`description` + `when_to_use`) | S2, C11 |
 | `SK09` | `when_to_use` | warn: OpenCode never reads it | O7 |
