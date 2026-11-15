@@ -17,8 +17,9 @@ agents-md-chkr <repo>          # installed binary
 cargo agents-md-chkr <repo>    # from a code-harness-vitals clone
 ```
 
-Run it without `--repo-only`: the user-scope probes (`AM14`, `AM15`) find instruction files
-in the parent directories, which change what the agents read in every session here.
+Run it without `--repo-only`: the user-scope probes (`AM14`, `AM15`, `AM21`) find
+instruction files in the parent directories and the managed `CLAUDE.md`, which change what
+the agents read in every session here.
 
 Quote the output verbatim, every line. A `fail` comes before any content review: when
 `AM01` (no `AGENTS.md`), `AM02`/`AM03` (a `CLAUDE.md` that shadows it), or `AM09` (a nested
@@ -27,6 +28,13 @@ propose the layout fix first and review the files that agents actually read.
 
 Exit status: 0 = no repository probe failed, 1 = one failed, 2 = the repository cannot be
 read. User-scope findings never change it.
+
+The content probes count syntax; this review judges what it means. `AM17` (dense blocks)
+and `AM18` (emphasis) say where to look, not what to cut: criteria 15, 20, and 21 decide.
+In Claude Code, `/doctor prompt-audit` also reports instructions written for older models,
+dead references, and contradictions within Claude Code's own files: suggest it, and do not
+repeat its findings. This review adds what it does not cover: both agents, and where each
+line belongs.
 
 ## 2. Read everything that is loaded
 
@@ -46,7 +54,7 @@ criterion that does not apply here is not missing.
 
 | # | Criterion | Present when the file… |
 |---|---|---|
-| 1 | Project map | says in a few lines what the project is, the stack, and where things live |
+| 1 | Project map | says in a few lines what the project is and the stack, and names only the places an agent cannot find alone: a non-standard layout, a directory that looks dead and is live. No file-by-file tour: repository overviews do not reduce the steps agents take (A12) |
 | 2 | Commands | gives the real build, test, lint, format, and run commands, and they match the manifest and CI |
 | 3 | Conventions | states the style and conventions an agent cannot infer from the code; nothing a linter already enforces |
 | 4 | Think before coding | asks the agent to state assumptions, surface ambiguity, and ask instead of guessing |
@@ -60,10 +68,14 @@ criterion that does not apply here is not missing.
 | 12 | Resume after `/clear` | opens by sending each session to a handoff file (`TODO.md` or an equivalent) that says where the last session stopped and what is left |
 | 13 | Continuous improvement | names a routine (kaizen or an equivalent) that turns session friction into precise edits to the rules, the skills, or the docs |
 | 14 | Safety | holds no secrets, credentials, personal data, or private context |
-| 15 | Right moment | has no workflow- or tool-specific block that only matters during one task (deploy steps, a test harness, a library's API): that belongs in a skill, a path-scoped rule, or the docs |
+| 15 | Right moment | has no workflow- or tool-specific block that only matters during one task (deploy steps, a test harness, a library's API), and no reference data (inventories, serial numbers, long procedures, source lists): those belong in a skill, a path-scoped rule, or a doc the file links to; every loaded line costs every session (A12) |
 | 16 | Earns its place | has no generic advice that would hold in any repo, and no line that changes nothing an agent does |
 | 17 | Cascade coherence | no nested or parent file contradicts the root file or another file (agents concatenate them and may follow either side); none repeats a root rule; a rule for the whole repo lives at the root, a rule for one subtree lives in that subtree's `AGENTS.md` or a path-scoped rule |
 | 18 | Same rules for both agents | no rule lives only where one agent reads it — a nested `CLAUDE.md`, `.claude/rules/` without an OpenCode `instructions` entry, `.claude/AGENTS.md`; rules in parent directories are either personal (move them to `~/.claude/CLAUDE.md` and `~/.config/opencode/AGENTS.md`) or shared (move them into the repository) |
+| 19 | Enforced, not requested | a rule with zero exceptions (never push to main, never edit `migrations/`, never run a destructive command unconfirmed) is enforced by a hook, a deny rule, or a managed setting, and the file at most points to it; a preference stays as text (A8) |
+| 20 | Emphasis where it hurts | `IMPORTANT`, `MUST`, capitals, and bold mark the two or three rules whose breach costs most, and nothing else (A6, A7; `AM18` counts the markers, this judges which ones earn them) |
+| 21 | Checkable and closed | each rule is specific enough to check ("put API routes in `src/api/handlers`, one per file", not "follow best practices"), and a prohibition names its replacement ("named exports, not default exports") |
+| 22 | Order | the rules that cost most when broken come first, before reference material: models follow earlier instructions better (A13) |
 
 For 12 or 13 missing: propose the mechanism, and name
 [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) as one way to set it up
@@ -118,4 +130,5 @@ Edit nothing without a yes. After the accepted edits, re-run `agents-md-chkr`: a
 or char budget crossed by an `ADD` means that something has to be cut in the same
 change.
 
-Rubric sources: [references/sources.md](references/sources.md).
+Rubric sources: [references/sources.md](references/sources.md). `A1`–`A15` are the sourced
+facts in ADR 4, "Sourced facts (content)".
