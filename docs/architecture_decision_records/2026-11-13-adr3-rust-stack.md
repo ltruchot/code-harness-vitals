@@ -194,7 +194,8 @@ patterns.
   - the version is at least 3 days old.
 
   The standard library is preferred when the gain is marginal.
-- Current set: `clap`, `ignore`, `thiserror`, and `serde_json` (xtask); for tests,
+- Current set: `clap`, `globset` (rule `paths` patterns; already a dependency of `ignore`),
+  `ignore`, `thiserror`, and `serde_json` (xtask); for tests,
   `assert_cmd`, `predicates`, `proptest`, and `tempfile`.
 
 ### Commands and gates
