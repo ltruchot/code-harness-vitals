@@ -4,6 +4,7 @@
 //! They judge every file an agent reads as instructions: the root rules file, the nested
 //! instruction files, and the files they import.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use vitals_utils::markdown::{self, Region, code_spans, outside_code, prose};
@@ -11,7 +12,7 @@ use vitals_utils::{Finding, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify};
 use crate::imports::{self, Broken, HOPS, Problem};
-use crate::probes::subject;
+use crate::opencode;
 use crate::snapshot::Snapshot;
 
 /// The longest block (paragraph, list item, table row) before `AM17` warns, in chars.
@@ -48,32 +49,40 @@ pub(crate) struct Judged<'a> {
     pub(crate) text: &'a str,
 }
 
-/// The root rules file, then every nested instruction file, then every imported file.
+/// Every file an agent reads as instructions: the import sources (the root rules files and
+/// the nested files an agent reads), then the Markdown files that Claude Code loads through
+/// their imports, within four hops. An imported file that is not Markdown
+/// (`@package.json`) counts in the budgets but is not prose to judge.
 pub(crate) fn judged(snapshot: &Snapshot) -> Vec<Judged<'_>> {
-    let root = subject(snapshot).map(|(path, text)| Judged {
-        path: PathBuf::from(path),
-        text,
-    });
-    let nested = snapshot.nested.iter().filter_map(|entry| {
-        let read = classify(&entry.path) != Some(Kind::Unread);
-        let text = entry.file.content.as_deref().filter(|_| read)?;
-        Some(Judged {
-            path: entry.path.clone(),
+    let sources = import_sources(snapshot);
+    let mut files: Vec<Judged<'_>> = sources
+        .iter()
+        .map(|(path, text)| Judged {
+            path: path.clone(),
             text,
         })
-    });
-    let imported = snapshot.imported.iter().filter_map(|(path, content)| {
-        Some(Judged {
-            path: path.clone(),
-            text: content.as_deref()?,
-        })
-    });
-    let mut files: Vec<Judged<'_>> = root.into_iter().chain(nested).collect();
-    let fresh: Vec<Judged<'_>> = imported
-        .filter(|import| files.iter().all(|file| file.path != import.path))
         .collect();
-    files.extend(fresh);
+    let loaded = sources
+        .iter()
+        .flat_map(|(path, text)| imports::expand(path, text, &snapshot.imported).loaded);
+    for path in loaded {
+        let text = snapshot.imported.get(&path).and_then(Option::as_deref);
+        let fresh = files.iter().all(|file| file.path != path);
+        if let Some(text) = text.filter(|_| fresh && is_markdown(&path)) {
+            files.push(Judged { path, text });
+        }
+    }
     files
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["md", "markdown", "mdx"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
 }
 
 pub(crate) fn findings(snapshot: &Snapshot) -> Vec<Finding> {
@@ -137,18 +146,10 @@ fn import_findings(snapshot: &Snapshot) -> Vec<Finding> {
             "no @path import",
         )];
     }
+    let mut seen = BTreeSet::new();
     let found: Vec<Finding> = sources
         .iter()
-        .flat_map(|(path, text)| {
-            let expansion = imports::expand(path, text, &snapshot.imported);
-            let unseen = unseen_by_opencode(path, text, snapshot);
-            expansion
-                .broken
-                .iter()
-                .map(broken)
-                .chain(unseen)
-                .collect::<Vec<_>>()
-        })
+        .flat_map(|(path, text)| source_findings(path, text, snapshot, &mut seen))
         .collect();
     or_pass(
         found,
@@ -159,6 +160,27 @@ fn import_findings(snapshot: &Snapshot) -> Vec<Finding> {
             "every @path import loads a file",
         ),
     )
+}
+
+/// An import broken somewhere: the file, the line, and the token.
+type Seen = BTreeSet<(PathBuf, usize, String)>;
+
+/// The `AM16` findings of one source. A file that two sources load (`CLAUDE.md` bridging
+/// to `AGENTS.md`) is reported once, through `seen`.
+fn source_findings(path: &Path, text: &str, snapshot: &Snapshot, seen: &mut Seen) -> Vec<Finding> {
+    imports::expand(path, text, &snapshot.imported)
+        .broken
+        .into_iter()
+        .filter(|found| {
+            seen.insert((
+                found.file.clone(),
+                found.import.line,
+                found.import.raw.clone(),
+            ))
+        })
+        .map(|found| broken(&found))
+        .chain(unseen_by_opencode(path, text, snapshot))
+        .collect()
 }
 
 /// The files whose imports are followed: the root files with content, then the nested
@@ -173,7 +195,9 @@ fn import_sources(snapshot: &Snapshot) -> Vec<(PathBuf, &str)> {
         ),
     ]
     .into_iter()
-    .filter_map(|(path, text)| Some((PathBuf::from(path), text?)));
+    .filter_map(|(path, text)| Some((PathBuf::from(path), text?)))
+    // A `CLAUDE.md` that links to `AGENTS.md` is the same file.
+    .filter(|(path, text)| path == Path::new("AGENTS.md") || snapshot.agents_md.as_deref() != Some(*text));
     let nested = snapshot
         .nested
         .iter()
@@ -214,7 +238,7 @@ fn unseen_by_opencode(path: &Path, text: &str, snapshot: &Snapshot) -> Vec<Findi
         .into_iter()
         .filter(|(_, target)| {
             snapshot.imported.get(target).is_some_and(Option::is_some)
-                && !config.contains(&*target.to_string_lossy())
+                && !opencode::lists(config, target)
         })
         .map(|(import, target)| {
             Finding::new(

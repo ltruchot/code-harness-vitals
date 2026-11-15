@@ -157,9 +157,23 @@ measure both views and judge the larger; their message gives the Claude Code vie
 imports or comments make it differ. Imports are followed inside the repository only: a
 target in the home directory or elsewhere depends on each machine and is not measured.
 
-**Content probes.** `AM16`–`AM19` judge the root rules file and every nested instruction
-file that an agent reads. They count syntax whose effect a source documents; they never
-judge meaning, which stays with the review.
+**Content probes.** `AM16`–`AM19` judge every root rules file with its own content
+(`AGENTS.md`, `CLAUDE.md`, `.claude/CLAUDE.md`), every nested instruction file that an
+agent reads, and the Markdown files that Claude Code loads through their imports, within
+four hops. An imported file that is not Markdown (`@package.json`) counts in the budgets
+but is not judged as prose, and a file that two sources import is reported once. They
+count syntax whose effect a source documents; they never judge meaning, which stays with
+the review.
+
+- An **import** is an `@` token at the start of a line or after whitespace (A14) that holds
+  a `/` or a `.`, or starts with `~`. A bare word (`@README`, the memory docs' own
+  example) is an import when a file of that name exists, sentence punctuation removed; a
+  bare word that names no file is read as a mention (`@team`) and not reported. An import
+  in an `AGENTS.md` loads in OpenCode only when an `instructions` entry of
+  `opencode.json[c]` matches it: a path or a glob, relative to the project
+  (`config/plugin/instruction.ts` at `d759c548aa`).
+- A **fence** closes only on the character that opened it, repeated at least as many times,
+  with nothing after it (CommonMark), so a ```` block can show a ``` example.
 
 - A **block** is a paragraph, a list item with its continuation lines, or a table row,
   outside fenced code and HTML comments. 400 chars is about 100 tokens, four lines of 100
@@ -177,6 +191,10 @@ judge meaning, which stays with the review.
   not judged.
 - `AM20` matches `paths` patterns with `globset` (`*` stops at `/`, `**` crosses it, braces
   expand) against the repository files, relative to the directory that holds `.claude/`.
+  A leading `./` is dropped, and a comma inside `{...}` or quotes does not split a
+  pattern. A pattern whose literal directory (`dist` in `dist/**/*.js`) exists on disk but
+  is ignored by the walk is not reported: Claude Code still loads the rule when it works
+  there.
 
 #### Sourced facts (content)
 

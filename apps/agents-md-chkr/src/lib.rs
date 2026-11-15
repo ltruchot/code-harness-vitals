@@ -14,6 +14,7 @@ mod cascade;
 mod content;
 mod imports;
 mod nested;
+mod opencode;
 mod probes;
 mod rules;
 mod snapshot;

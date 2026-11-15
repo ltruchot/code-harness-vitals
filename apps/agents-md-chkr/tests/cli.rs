@@ -458,6 +458,77 @@ fn the_inventory_lists_the_whole_cascade() {
     .stdout(contains(".claude/rules/a.md"));
 }
 
+#[test]
+fn content_probes_judge_what_loads_once() {
+    let fence = "````md\n```\n[ex](docs/example.md)\n```\n````\n";
+    let dir = repo(&[
+        (
+            "AGENTS.md",
+            &format!(
+                "{HANDOFF}- @docs/gone.md\n- @package.json\n- @docs/style.md\n\
+                 See @README, ask @team.\n{fence}"
+            ),
+        ),
+        (
+            "CLAUDE.md",
+            "@AGENTS.md\n\nYou MUST, MUST, MUST, MUST check `docs/old.md`.\n",
+        ),
+        ("README", "# Readme\n- @docs/readme-gone.md\n"),
+        (
+            "package.json",
+            &format!("{{\n{}}}\n", "  \"k\": \"v\",\n".repeat(60)),
+        ),
+        ("docs/style.md", "# Style\n"),
+        (
+            "opencode.json",
+            "{\"instructions\": [\"docs/*.md\", \"README\"]}\n",
+        ),
+        ("lib/.hidden/AGENTS.md", "# x\n"),
+    ]);
+    // `AM02` fails: the root CLAUDE.md holds rules of its own.
+    gate(&dir)
+        .code(1)
+        // Reported once, though CLAUDE.md imports AGENTS.md.
+        .stdout(contains("AGENTS.md: line 4: `@docs/gone.md` imports nothing").count(1))
+        // A bare word that names a file is an import, followed; a mention is not reported.
+        .stdout(contains("README: line 2: `@docs/readme-gone.md` imports nothing"))
+        .stdout(contains("@team").not())
+        // A glob in OpenCode's `instructions` lists the import.
+        .stdout(contains("never loads docs/style.md").not())
+        // JSON is counted in the budgets, not judged as prose.
+        .stdout(contains("AM17 package.json").not())
+        // The root CLAUDE.md is judged too.
+        .stdout(contains("[warn] AM18 CLAUDE.md"))
+        .stdout(contains("[warn] AM19 CLAUDE.md"))
+        // A four-backtick fence holds the three-backtick example.
+        .stdout(contains("docs/example.md").not());
+}
+
+#[test]
+fn rule_patterns_with_braces_dot_slash_or_ignored_targets_are_not_dead() {
+    let dir = repo(&[
+        (
+            ".claude/rules/web.md",
+            "---\npaths: [\"src/**/*.{ts,tsx}\", \"./src/**\", \"dist/**/*.js\"]\n---\n",
+        ),
+        (
+            ".claude/rules/csv.md",
+            "---\npaths: src/**/*.{ts,tsx}, lib/*.rs\n---\n",
+        ),
+        ("src/a.ts", ""),
+        ("lib/b.rs", ""),
+        (".gitignore", "dist/\n"),
+        ("dist/app.js", ""),
+        (
+            "opencode.json",
+            "{\"instructions\": [\".claude/rules/*.md\"]}\n",
+        ),
+    ]);
+    gate(&dir)
+        .code(0)
+        .stdout(contains("[pass] AM20 .claude/rules: 2 rules files"));
+}
+
 /// `<tmp>/home` is `$HOME`; the repository is `<tmp>/home/work/repo`.
 fn user_tree() -> (TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().unwrap();

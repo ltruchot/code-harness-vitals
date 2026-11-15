@@ -112,12 +112,13 @@ impl Frontmatter {
         })
     }
 
-    /// The items of `key`: a sequence's items, or a string split on commas, each trimmed
-    /// and non-empty; `None` when absent, empty, or a map.
+    /// The items of `key`: a sequence's items, or a string split on the commas outside
+    /// quotes and `{...}` groups (`src/**/*.{ts,tsx}` stays whole), each trimmed and
+    /// non-empty; `None` when absent, empty, or a map.
     pub fn items(&self, key: &str) -> Option<Vec<String>> {
         let items: Vec<String> = match &self.field(key)?.value {
             Value::List(items) => items.clone(),
-            Value::Text(text) => text.split(',').map(str::to_owned).collect(),
+            Value::Text(text) => split_items(text).into_iter().map(str::to_owned).collect(),
             Value::Empty | Value::Collection => return None,
         };
         let kept: Vec<String> = items
@@ -336,8 +337,8 @@ fn flow(inline: &str) -> (Value, Option<Mistake>) {
         .strip_prefix('[')
         .and_then(|rest| close.and_then(|at| rest.get(..at.saturating_sub(1))))
     {
-        let items = inner
-            .split(',')
+        let items = split_items(inner)
+            .into_iter()
             .map(|item| unquote(item.trim()))
             .filter(|item| !item.is_empty())
             .collect();
@@ -345,6 +346,29 @@ fn flow(inline: &str) -> (Value, Option<Mistake>) {
     } else {
         (Value::Collection, None)
     }
+}
+
+/// `text` split on the commas outside quotes, brackets, and braces.
+fn split_items(text: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut start = 0;
+    let mut depth = 0_usize;
+    let mut quote = None;
+    for (at, c) in text.char_indices() {
+        match (quote, c) {
+            (Some(open), _) if c == open => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '[' | '{') => depth = depth.saturating_add(1),
+            (None, ']' | '}') => depth = depth.saturating_sub(1),
+            (None, ',') if depth == 0 => {
+                items.push(text.get(start..at).unwrap_or_default());
+                start = at.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    items.push(text.get(start..).unwrap_or_default());
+    items
 }
 
 /// A scalar item without its quotes.
@@ -440,6 +464,17 @@ mod tests {
         assert_eq!(items("map"), None);
         assert_eq!(items("none"), None);
         assert_eq!(items("absent"), None);
+        let braces = fields(
+            "---\nflow: [\"src/**/*.{ts,tsx}\", 'a,b.md']\ncsv: src/**/*.{ts,tsx}, lib/*.rs\n---\n",
+        );
+        assert_eq!(
+            braces.items("flow").unwrap(),
+            ["src/**/*.{ts,tsx}", "a,b.md"]
+        );
+        assert_eq!(
+            braces.items("csv").unwrap(),
+            ["src/**/*.{ts,tsx}", "lib/*.rs"]
+        );
     }
 
     #[test]

@@ -33,7 +33,11 @@ pub struct Line<'a> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Prose,
-    Fence,
+    /// Inside a fenced block opened by `len` copies of `mark`.
+    Fence {
+        mark: char,
+        len: usize,
+    },
     Comment,
 }
 
@@ -52,15 +56,29 @@ pub fn lines(text: &str) -> impl Iterator<Item = Line<'_>> {
         })
 }
 
+/// The fence that opens `line`: its character and length, three or more.
+fn fence(line: &str) -> Option<(char, usize)> {
+    let mark = line.chars().next().filter(|c| *c == '`' || *c == '~')?;
+    let len = line.chars().take_while(|c| *c == mark).count();
+    (len >= 3).then_some((mark, len))
+}
+
 fn step(state: State, line: &str) -> (Region, State) {
-    let fence = line.starts_with("```") || line.starts_with("~~~");
+    let opened = fence(line);
     match state {
-        State::Fence => (
-            Region::Code,
-            if fence { State::Prose } else { State::Fence },
-        ),
+        // `CommonMark`: a closing fence uses the same character, at least as many times,
+        // and nothing but spaces after it.
+        State::Fence { mark, len } => {
+            let closes = opened.is_some_and(|(other, count)| {
+                other == mark && count >= len && line.trim_start_matches(mark).trim().is_empty()
+            });
+            (Region::Code, if closes { State::Prose } else { state })
+        }
         State::Comment => (Region::Comment, comment_state(line.contains("-->"))),
-        State::Prose if fence => (Region::Code, State::Fence),
+        State::Prose if opened.is_some() => {
+            let (mark, len) = opened.unwrap_or(('`', 3));
+            (Region::Code, State::Fence { mark, len })
+        }
         State::Prose if line.starts_with("<!--") => {
             let rest = line.get(4..).unwrap_or_default();
             (Region::Comment, comment_state(rest.contains("-->")))
@@ -249,6 +267,13 @@ mod tests {
             ]
         );
         assert_eq!(links("x\n[r]: b.md\n"), [(2, "b.md".to_owned())]);
+    }
+
+    #[test]
+    fn a_fence_closes_only_on_its_own_kind_and_length() {
+        let text = "````md\n```\n[ex](docs/example.md)\n```\n````\n[after](a.md)\n\
+                    ~~~\n```\n[in](b.md)\n~~~\n```js\n``` not a close\n[c](c.md)\n```\n";
+        assert_eq!(link_targets(text), ["a.md"]);
     }
 
     #[test]
