@@ -3,10 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
+use vitals_utils::frontmatter::{self, Field, Frontmatter, Value};
+use vitals_utils::markdown;
 use vitals_utils::{Finding, TextSize, Verdict, or_pass};
 
-use crate::frontmatter::{self, Field, Frontmatter, Value};
-use crate::links;
 use crate::probes::{DESCRIPTION, LINE_LIMIT, no_skill};
 use crate::snapshot::{Link, Skill, Snapshot};
 
@@ -182,7 +182,9 @@ fn described(judged: &Judged<'_>) -> Option<Finding> {
         return None;
     }
     let message = match front.field("description").map(|field| &field.value) {
-        Some(Value::Collection) => "`description` is not a string: OpenCode skips the skill",
+        Some(Value::List(_) | Value::Collection) => {
+            "`description` is not a string: OpenCode skips the skill"
+        }
         Some(Value::Text(_) | Value::Empty) | None => {
             "no description: OpenCode never lists the skill to the model, and Claude Code \
              matches on the first line of the body"
@@ -268,7 +270,7 @@ fn reserved(judged: &Judged<'_>) -> Option<Problem> {
 
 fn not_a_string(judged: &Judged<'_>) -> Option<Problem> {
     let field = judged.front.field("name")?;
-    (field.value == Value::Collection).then(|| {
+    field.value.is_collection().then(|| {
         (
             Verdict::Fail,
             "`name` is not a string: OpenCode skips the skill".to_owned(),
@@ -335,7 +337,7 @@ fn short(judged: &Judged<'_>) -> Option<Finding> {
 
 /// `SK12`: every relative link in `SKILL.md` points to a file or directory that exists.
 fn references(judged: &Judged<'_>, repository: &[PathBuf]) -> Vec<Finding> {
-    links::targets(&judged.skill.text)
+    markdown::link_targets(&judged.skill.text)
         .into_iter()
         .filter(|target| broken(judged.skill, target, repository))
         .map(|target| {
@@ -357,7 +359,7 @@ fn references(judged: &Judged<'_>, repository: &[PathBuf]) -> Vec<Finding> {
 /// climbs out of the repository, it is not judged.
 fn broken(skill: &Skill, target: &str, repository: &[PathBuf]) -> bool {
     let dir = skill.place.dir();
-    let Some(path) = links::resolve(&dir, target) else {
+    let Some(path) = markdown::resolve(&dir, target) else {
         return false;
     };
     if let Ok(inside) = path.strip_prefix(&dir) {
@@ -369,7 +371,7 @@ fn broken(skill: &Skill, target: &str, repository: &[PathBuf]) -> bool {
         Some(Link::Outside) => false,
         Some(Link::Inside(real)) => {
             missing
-                && links::resolve(real, target)
+                && markdown::resolve(real, target)
                     .is_some_and(|physical| !listed(repository, &physical))
         }
     }

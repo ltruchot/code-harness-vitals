@@ -1,39 +1,54 @@
-//! `SKILL.md` frontmatter, read by a line scanner: pure, no I/O.
+//! The YAML frontmatter of a Markdown file (`SKILL.md`, a `.claude/rules` file), read by a
+//! line scanner: pure, no I/O.
 //!
 //! This is not a YAML parser (ADR 4, "The skills gate"). It finds the top-level keys of the
 //! block between the opening `---` (first line) and the closing `---`, reads each key's
-//! scalar value (plain, quoted, or block), and flags the two plain-value mistakes that YAML
-//! rejects: a `: ` inside the value, and a value that opens with a reserved indicator or a
-//! flow collection followed by text. Claude Code then loads the skill with no fields;
-//! `OpenCode` (`config/markdown.ts`) retries values that contain `:` or start with
-//! `[x] text` as block scalars, and skips the skill otherwise.
+//! scalar value (plain, quoted, or block) or sequence of scalars, and flags the two
+//! plain-value mistakes that YAML rejects: a `: ` inside the value, and a value that opens
+//! with a reserved indicator or a flow collection followed by text. Claude Code then loads
+//! a skill with no fields; `OpenCode` (`config/markdown.ts`) retries values that contain
+//! `:` or start with `[x] text` as block scalars, and skips the skill otherwise.
 
 /// What a top-level key holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Value {
+pub enum Value {
     /// A string scalar.
     Text(String),
     /// No value: YAML null.
     Empty,
-    /// A list or a map: not a string to either agent.
+    /// A sequence (`[a, b]`, or `- a` lines), with its scalar items unquoted.
+    List(Vec<String>),
+    /// A map.
     Collection,
+}
+
+impl Value {
+    /// Whether the value is a list or a map, which neither agent reads as a string.
+    #[must_use]
+    pub const fn is_collection(&self) -> bool {
+        matches!(self, Self::List(_) | Self::Collection)
+    }
 }
 
 /// Why YAML rejects a plain value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mistake {
+pub enum Mistake {
     /// `: ` inside the value, or a trailing `:`: `OpenCode` repairs it.
     Colon,
     /// `[x] text`: `OpenCode` repairs it.
     TaggedText,
     /// Opens with `` ` `` or `@`, which YAML reserves: `OpenCode` repairs it only when the
     /// value also holds a `:`.
-    Reserved { repaired: bool },
+    Reserved {
+        /// Whether the value also holds a `:`, so that `OpenCode` repairs it.
+        repaired: bool,
+    },
 }
 
 impl Mistake {
     /// Whether `OpenCode`'s retry turns the value back into a string.
-    pub(crate) const fn repaired(self) -> bool {
+    #[must_use]
+    pub const fn repaired(self) -> bool {
         match self {
             Self::Colon | Self::TaggedText => true,
             Self::Reserved { repaired } => repaired,
@@ -41,7 +56,8 @@ impl Mistake {
     }
 
     /// What is wrong, for a finding message.
-    pub(crate) const fn reason(self) -> &'static str {
+    #[must_use]
+    pub const fn reason(self) -> &'static str {
         match self {
             Self::Colon => "holds an unquoted `: `",
             Self::TaggedText => "opens with `[...]` followed by text",
@@ -52,17 +68,20 @@ impl Mistake {
 
 /// One top-level key.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Field {
-    pub(crate) key: String,
-    pub(crate) value: Value,
+pub struct Field {
+    /// The key.
+    pub key: String,
+    /// What it holds.
+    pub value: Value,
     /// The key's line in the file, from 1.
-    pub(crate) line: usize,
-    pub(crate) mistake: Option<Mistake>,
+    pub line: usize,
+    /// The YAML mistake in a plain value, if any.
+    pub mistake: Option<Mistake>,
 }
 
-/// The frontmatter of a `SKILL.md`.
+/// The frontmatter of a Markdown file.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Frontmatter {
+pub enum Frontmatter {
     /// The first line is not `---`.
     Missing,
     /// The first line is `---` and no later line closes the block.
@@ -73,7 +92,8 @@ pub(crate) enum Frontmatter {
 
 impl Frontmatter {
     /// The field `key`, when the block has it.
-    pub(crate) fn field(&self, key: &str) -> Option<&Field> {
+    #[must_use]
+    pub fn field(&self, key: &str) -> Option<&Field> {
         match self {
             Self::Fields(fields) => fields.iter().find(|field| field.key == key),
             Self::Missing | Self::Unclosed => None,
@@ -81,16 +101,34 @@ impl Frontmatter {
     }
 
     /// The string value of `key`, trimmed; `None` when absent, empty, or not a string.
-    pub(crate) fn text(&self, key: &str) -> Option<&str> {
+    #[must_use]
+    pub fn text(&self, key: &str) -> Option<&str> {
         self.field(key).and_then(|field| match &field.value {
             Value::Text(text) => Some(text.trim()).filter(|text| !text.is_empty()),
-            Value::Empty | Value::Collection => None,
+            Value::Empty | Value::List(_) | Value::Collection => None,
         })
+    }
+
+    /// The items of `key`: a sequence's items, or a string split on commas, each trimmed
+    /// and non-empty; `None` when absent, empty, or a map.
+    pub fn items(&self, key: &str) -> Option<Vec<String>> {
+        let items: Vec<String> = match &self.field(key)?.value {
+            Value::List(items) => items.clone(),
+            Value::Text(text) => text.split(',').map(str::to_owned).collect(),
+            Value::Empty | Value::Collection => return None,
+        };
+        let kept: Vec<String> = items
+            .iter()
+            .map(|item| item.trim().to_owned())
+            .filter(|item| !item.is_empty())
+            .collect();
+        (!kept.is_empty()).then_some(kept)
     }
 
     /// Whether `key` is a true boolean, as both agents read one (`true`, `yes`, `on`, `1`,
     /// in any letter case).
-    pub(crate) fn is_true(&self, key: &str) -> bool {
+    #[must_use]
+    pub fn is_true(&self, key: &str) -> bool {
         self.text(key).is_some_and(|text| {
             ["true", "yes", "on", "1"]
                 .iter()
@@ -102,7 +140,7 @@ impl Frontmatter {
 const FENCE: &str = "---";
 
 /// Reads the frontmatter of `text`.
-pub(crate) fn read(text: &str) -> Frontmatter {
+pub fn read(text: &str) -> Frontmatter {
     let mut lines = text.lines();
     if lines.next().map(str::trim_end) != Some(FENCE) {
         return Frontmatter::Missing;
@@ -215,7 +253,14 @@ impl Entry<'_> {
         let lines: Vec<&str> = self.continuation().collect();
         match lines.first() {
             None => Value::Empty,
-            Some(first) if first.starts_with('-') || key_line(first).is_some() => Value::Collection,
+            Some(first) if first.starts_with('-') => Value::List(
+                lines
+                    .iter()
+                    .filter_map(|line| line.strip_prefix('-'))
+                    .map(|item| unquote(item.trim()))
+                    .collect(),
+            ),
+            Some(first) if key_line(first).is_some() => Value::Collection,
             Some(_) => Value::Text(lines.join(" ")),
         }
     }
@@ -243,9 +288,24 @@ fn flow(inline: &str) -> (Value, Option<Mistake>) {
         .is_some_and(|after| !after.trim().is_empty() && !after.trim().starts_with('#'));
     if trailing {
         (Value::Text(inline.to_owned()), Some(Mistake::TaggedText))
+    } else if let Some(inner) = inline
+        .strip_prefix('[')
+        .and_then(|rest| close.and_then(|at| rest.get(..at.saturating_sub(1))))
+    {
+        let items = inner
+            .split(',')
+            .map(|item| unquote(item.trim()))
+            .filter(|item| !item.is_empty())
+            .collect();
+        (Value::List(items), None)
     } else {
         (Value::Collection, None)
     }
+}
+
+/// A scalar item without its quotes.
+fn unquote(item: &str) -> String {
+    quoted(item).unwrap_or_else(|| item.to_owned())
 }
 
 /// The plain value without a trailing ` # comment`.
@@ -312,9 +372,30 @@ mod tests {
         let found =
             fields("---\ntags: [a, b]\nmeta: {k: v}\nlist:\n- a\n- b\nmap:\n  key: value\n---\n");
         for key in ["tags", "meta", "list", "map"] {
-            assert_eq!(found.field(key).unwrap().value, Value::Collection, "{key}");
+            assert!(found.field(key).unwrap().value.is_collection(), "{key}");
             assert_eq!(found.text(key), None);
         }
+        let list = Value::List(vec!["a".to_owned(), "b".to_owned()]);
+        assert_eq!(found.field("tags").unwrap().value, list);
+        assert_eq!(found.field("list").unwrap().value, list);
+        assert_eq!(found.field("map").unwrap().value, Value::Collection);
+        assert!(!Value::Empty.is_collection());
+    }
+
+    #[test]
+    fn items_read_lists_and_comma_separated_strings() {
+        let found = fields(
+            "---\nblock:\n  - \"src/**/*.ts\"\n  - 'lib/*.rs'\nflow: [\"a/**\", b/*.md, ]\n\
+             csv: src/a.ts, , lib/b.ts\nempty:\nmap:\n  k: v\nnone: []\n---\n",
+        );
+        let items = |key| found.items(key);
+        assert_eq!(items("block").unwrap(), ["src/**/*.ts", "lib/*.rs"]);
+        assert_eq!(items("flow").unwrap(), ["a/**", "b/*.md"]);
+        assert_eq!(items("csv").unwrap(), ["src/a.ts", "lib/b.ts"]);
+        assert_eq!(items("empty"), None);
+        assert_eq!(items("map"), None);
+        assert_eq!(items("none"), None);
+        assert_eq!(items("absent"), None);
     }
 
     #[test]
