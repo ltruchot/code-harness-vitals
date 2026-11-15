@@ -14,7 +14,7 @@ the ADR 3 stack. The first gate, `agents-md`, proves the model.
 | `agents-md` gate: probes                    | ✅ Done    | `apps/agents-md-chkr/`                     |
 | `agents-md` gate: review skill              | ✅ Done    | `apps/agents-md-chkr/skills/agents-md-review/` |
 | `agents-md` gate: cascade probes            | ✅ Done    | `apps/agents-md-chkr/src/{cascade,nested,ancestors}.rs` |
-| `agents-md` gate: content probes (`AM16`–`AM21`) | ⏳ Planned | `apps/agents-md-chkr/src/{imports,content}.rs` |
+| `agents-md` gate: content probes (`AM16`–`AM21`) | ✅ Done    | `apps/agents-md-chkr/src/{imports,content,rules}.rs` |
 | Container end-to-end tests                  | ✅ Done    | `apps/*-chkr/tests/container.rs`           |
 | `skills` gate: probes                       | ✅ Done    | `apps/skills-chkr/`                        |
 | `skills` gate: review skill                 | ✅ Done    | `apps/skills-chkr/skills/skills-review/`   |
@@ -85,7 +85,7 @@ in Claude Code and OpenCode, which read the same `SKILL.md`.
 
 | Gate | Pillar | Probes (deterministic) | Review (agent, advisory) | Status |
 | --- | --- | --- | --- | --- |
-| `agents-md` | 1. Instruction files | `AM01`–`AM15`, below | `agents-md-review`: 18-criterion rubric | ✅ |
+| `agents-md` | 1. Instruction files | `AM01`–`AM21`, below | `agents-md-review`: 22-criterion rubric | ✅ |
 | `skills` | 2. Skills | `SK01`–`SK15`, below | `skills-review`: 12-criterion rubric | ✅ |
 | `codebase-memory` | 3. Codebase memory | a code-intelligence MCP server or plugin is wired in for both agents | - | ⏳ |
 | `context-limiting` | 4. Context limiting | an output-capping tool or hook is wired in for both agents | - | ⏳ |
@@ -143,8 +143,8 @@ different rules with nothing in the repository to show it.
 
 The nested walk is the tree an agent sees: hidden files included, `.gitignore` honored,
 `.git/` and `.claude/worktrees/` skipped. User-scope probes (`AM14`, `AM15`) read every
-parent directory up to `/` and the home directory; they are labeled `(user scope)`, never
-fail, and never change the exit status. `--repo-only` skips them for reproducible CI runs.
+parent directory up to `/` and the home directory, and `AM21` the managed `CLAUDE.md`
+paths; they are labeled `(user scope)`, never fail, and never change the exit status. `--repo-only` skips them for reproducible CI runs.
 
 `AM07` and `AM08` detect one convention by its explicit markers. The review recognizes
 equivalents under other names (rubric criteria 12 and 13) and suggests

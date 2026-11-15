@@ -1,26 +1,28 @@
 # TODO
 
 ## Where we stopped
-The `skills` gate (pillar 2) is built on branch `gate/skills`, one commit per layer, not
-pushed and with no pull request yet: next action is push, open the draft PR, and run the
-code review on it. ADR 4, "The skills gate", holds the cascade of both agents (Claude Code
-skills docs; OpenCode source at `d759c548aa`), probes `SK01`–`SK13` in repository scope and
-`SK14`–`SK15` in user scope, and the 12-criterion `skills-review` rubric.
-Tests run at three levels: unit, e2e on `tempfile` trees (`apps/skills-chkr/tests/cli.rs`,
-23 cases), and containers (`tests/container.rs`, 6 images); `cargo xtask e2e` runs the
-container tests of every gate in `CONTAINER_GATES`. Branch coverage is 96.76%.
-`cargo skills-chkr --repo-only .` runs on this repo: `SK01` warns, since `.claude/` is not
-committed. The user-scope run on this machine was not done: it reads parent directories
-outside the working directory.
-Not verified: the `skills-review` skill run from an installed copy in a live session of each
-agent; Claude Code's handling of deeper layouts (`.claude/skills/<group>/<name>/SKILL.md`)
-and of unclosed frontmatter.
-Not verified: CI with two container gates (`jdx/mise-action`, docker on `ubuntu-latest`).
+Two stacked branches, one commit per layer (`.claude/skills/add-gate/`):
+- `gate/skills`: draft PR #1, CI green, `code-review` not run yet.
+- `gate/agents-md-content`, on top of `gate/skills`, not pushed, no PR: the `AM05`–`AM07`
+  fix (a `CLAUDE.md`-only repository was not judged) and the content probes `AM16`–`AM21`
+  (imports, structure, emphasis, references, rule `paths`, managed `CLAUDE.md`), with ADR 4
+  facts `A1`–`A15`, the 22-criterion rubric, and the README TL;DR format.
+  `cargo xtask check` passes (branch coverage 96.57%).
+Next actions, in order:
+1. `code-review` on PR #1; fix in new commits on `gate/skills`; `gh pr ready 1`; merge.
+2. `git rebase main` on `gate/agents-md-content` (no PR yet, so rebase is allowed), push,
+   open its draft PR (`.claude/skills/add-gate/PR.md`), `code-review`, merge.
+3. The main checkout holds an older, uncommitted `TODO.md`: `git checkout TODO.md` there
+   before pulling; then `git worktree remove .claude/worktrees/agent-af7db5ec9d62615ce`.
+Verified: `cargo agents-md-chkr --repo-only` on a 393-line `CLAUDE.md`-only project reports
+`AM01` fail and `AM05`, `AM08`, `AM17`, `AM18`, `AM19` warn.
+Not verified: a user-scope run on this machine (it reads parent directories outside the
+working directory); either review skill run from an installed copy.
 
 ## Later
 - Decide whether to commit `.claude/` (kaizen skill and `qol-mini.lock.json`); CI's `AM08` and `SK01` depend on it.
 - Distribute the review skills: a qol-mini bank entry, or an install command in the gate binaries.
-- `agents-md` probes: `@import` resolution (max four hops), backticked paths and commands that do not resolve, `paths` frontmatter of rules.
+- `agents-md`: commands that do not exist (`/doctor prompt-audit` covers them in Claude Code), imports outside the repository, the `claudeMd` key of managed settings.
 - `agents-md`: instruction files inside ignored dependency directories (`node_modules/*/AGENTS.md` loads on read in both agents).
 - `agents-md`: user settings that change the cascade (`claudeMdExcludes`, Project instructions `claude-md-and-agents-md`).
 - `skills`: run SkillSpector (`--no-llm --format json`) or agnix when installed, for script safety and per-agent lint (amends ADR 4).
