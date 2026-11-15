@@ -69,7 +69,13 @@ fn a_healthy_repository_prints_every_probe_and_exits_zero() {
          [n/a] AM13 .: no instruction file below the root\n\
          [n/a] AM14 (user scope) ..: skipped: --repo-only\n\
          [n/a] AM15 (user scope) ..: skipped: --repo-only\n\
-         agents-md gate passed: 0 fail, 0 warn, 11 pass, 4 n/a\n",
+         [n/a] AM16 .: no @path import\n\
+         [pass] AM17 .: 1 instruction file: headings and short blocks\n\
+         [pass] AM18 .: 1 instruction file: emphasis within budget\n\
+         [pass] AM19 .: every repository path and link that the instruction files name resolves\n\
+         [n/a] AM20 .claude/rules: no rules files\n\
+         [n/a] AM21 (user scope) /etc/claude-code: skipped: --repo-only\n\
+         agents-md gate passed: 0 fail, 0 warn, 14 pass, 7 n/a\n",
     );
 }
 
@@ -107,6 +113,123 @@ fn without_agents_md_the_budgets_judge_the_claude_md_that_loads() {
         .stdout(contains(
             "[pass] AM07 CLAUDE.md: opens by sending each session to TODO.md",
         ));
+}
+
+#[test]
+fn imports_count_toward_the_budget_and_opencode_must_list_them() {
+    let style = "- style rule\n".repeat(250);
+    let agents = format!("{HANDOFF}@docs/style.md\n");
+    let dir = repo(&[("AGENTS.md", &agents), ("docs/style.md", &style)]);
+    gate(&dir)
+        .code(0)
+        .stdout(contains(
+            "[warn] AM05 AGENTS.md: 254 lines (warn above 200, fail above 500), as Claude Code \
+             loads it, with 1 imported file",
+        ))
+        .stdout(contains(
+            "[warn] AM16 AGENTS.md: line 4: OpenCode reads `@docs/style.md` as text and never \
+             loads docs/style.md",
+        ))
+        .stdout(contains(
+            "fix: list docs/style.md in the `instructions` array of opencode.json",
+        ));
+    write(
+        dir.path(),
+        "opencode.json",
+        "{\"instructions\": [\"docs/style.md\"]}\n",
+    );
+    gate(&dir)
+        .code(0)
+        .stdout(contains("[pass] AM16 .: every @path import loads a file"));
+}
+
+#[test]
+fn broken_imports_warn_and_a_directory_target_does_not_stop_the_gate() {
+    let agents = format!("{HANDOFF}@docs/gone.md\n@docs/\n");
+    gate(&repo(&[("AGENTS.md", &agents), ("docs/a.md", "a\n")]))
+        .code(0)
+        .stdout(contains(
+            "[warn] AM16 AGENTS.md: line 4: `@docs/gone.md` imports nothing: no file is there",
+        ))
+        .stdout(contains(
+            "[warn] AM16 AGENTS.md: line 5: `@docs/` imports nothing: no file is there",
+        ));
+}
+
+#[test]
+fn imports_past_four_hops_warn_in_the_file_that_holds_them() {
+    let agents = format!("{HANDOFF}@h1.md\n");
+    gate(&repo(&[
+        ("AGENTS.md", &agents),
+        ("h1.md", "@h2.md\n"),
+        ("h2.md", "@h3.md\n"),
+        ("h3.md", "@h4.md\n"),
+        ("h4.md", "@h5.md\n"),
+        ("h5.md", "five\n"),
+    ]))
+    .code(0)
+    .stdout(contains(
+        "[warn] AM16 h4.md: line 1: `@h5.md` is past 4 hops of imports: Claude Code does not \
+         load it",
+    ));
+}
+
+#[test]
+fn html_comments_count_for_opencode_only() {
+    let agents = format!("{HANDOFF}<!--\n{}-->\n", "maintainer note\n".repeat(250));
+    gate(&repo(&[("AGENTS.md", &agents)]))
+        .code(0)
+        .stdout(contains(
+            "[warn] AM05 AGENTS.md: 255 lines (warn above 200, fail above 500), as OpenCode \
+             loads it, HTML comments included",
+        ));
+}
+
+#[test]
+fn content_probes_report_dense_blocks_emphasis_and_dangling_paths() {
+    let agents = format!(
+        "{HANDOFF}{}\n\n- NEVER push. ALWAYS test. You MUST lint. **Really** do.\n\
+         - Read `docs/guide.md` and `docs/missing.md`, see [old](docs/old.md).\n",
+        "word ".repeat(100)
+    );
+    gate(&repo(&[
+        ("AGENTS.md", &agents),
+        ("docs/guide.md", "# Guide\n"),
+    ]))
+    .code(0)
+    .stdout(contains(
+        "[warn] AM17 AGENTS.md: a block of 499 chars at line 4 (over 400): dense paragraphs",
+    ))
+    .stdout(contains(
+        "[warn] AM18 AGENTS.md: 4 emphasis markers (line 6; budget 3)",
+    ))
+    .stdout(contains(
+        "[warn] AM19 AGENTS.md: 2 paths resolve to nothing: `docs/missing.md` (line 7), \
+             `docs/old.md` (line 7)",
+    ));
+}
+
+#[test]
+fn rule_paths_must_match_a_file() {
+    let dir = repo(&[
+        ("src/api/users.ts", "export {}\n"),
+        (
+            ".claude/rules/api.md",
+            "---\npaths:\n  - \"src/api/**/*.ts\"\n---\n# API\n",
+        ),
+    ]);
+    gate(&dir).stdout(contains(
+        "[pass] AM20 .claude/rules: 1 rules file: every `paths` pattern matches a file",
+    ));
+    write(
+        dir.path(),
+        ".claude/rules/web.md",
+        "---\npaths: web/**/*.tsx\n---\n# Web\n",
+    );
+    gate(&dir).stdout(contains(
+        "[warn] AM20 .claude/rules/web.md: line 2: `paths` `web/**/*.tsx` matches no file in the \
+         repository, so Claude Code never loads the rule for it",
+    ));
 }
 
 #[test]

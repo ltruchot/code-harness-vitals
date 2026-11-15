@@ -8,6 +8,7 @@ version = "0.0.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "globset",
  "predicates",
  "tempfile",
  "vitals-utils",

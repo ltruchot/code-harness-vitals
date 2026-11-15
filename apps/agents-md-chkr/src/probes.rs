@@ -5,8 +5,9 @@ use std::path::{Component, Path};
 use vitals_utils::markers::AGENTS_MD;
 use vitals_utils::{Budget, Finding, Report, TextSize, Verdict};
 
+use crate::imports::Load;
 use crate::snapshot::{RulesFile, Snapshot};
-use crate::{ancestors, nested};
+use crate::{ancestors, content, nested, rules};
 
 /// Gate id.
 pub const GATE: &str = "agents-md";
@@ -75,15 +76,17 @@ pub(crate) fn check(snapshot: &Snapshot) -> Report {
         handoff(snapshot),
         kaizen(snapshot),
     ];
-    Report::new(
-        GATE,
-        [
-            root,
-            nested::findings(snapshot),
-            ancestors::findings(snapshot),
-        ]
-        .concat(),
-    )
+    let mut findings = [
+        root,
+        nested::findings(snapshot),
+        ancestors::findings(snapshot),
+        content::findings(snapshot),
+        rules::finding(snapshot),
+        vec![ancestors::managed(snapshot)],
+    ]
+    .concat();
+    findings.sort_by_key(Finding::probe);
+    Report::new(GATE, findings)
 }
 
 fn not_applicable(probe: &'static str, evidence: &str) -> Finding {
@@ -187,7 +190,7 @@ fn local_file(snapshot: &Snapshot) -> Finding {
 
 /// The root rules file that the budget and handoff probes judge: `AGENTS.md`, or, when
 /// there is none, the `CLAUDE.md` that Claude Code loads in its place.
-fn subject(snapshot: &Snapshot) -> Option<(&'static str, &str)> {
+pub(crate) fn subject(snapshot: &Snapshot) -> Option<(&'static str, &str)> {
     snapshot
         .agents_md
         .as_deref()
@@ -211,11 +214,29 @@ fn no_subject(probe: &'static str) -> Finding {
     )
 }
 
-/// `measured` is the judged file and its size in `unit`.
-fn budget(probe: &'static str, measured: (&str, usize), unit: &str, limit: Budget) -> Finding {
-    let (path, measure) = measured;
-    let verdict = limit.verdict(measure);
-    let finding = Finding::new(probe, verdict, path, limit.describe(measure, unit));
+/// The root rules file and its size as each agent loads it.
+fn loaded(snapshot: &Snapshot) -> Option<(&'static str, Load)> {
+    subject(snapshot).map(|(path, text)| {
+        let opencode_reads = path == AGENTS_MD;
+        let load = Load::of(Path::new(path), text, &snapshot.imported, opencode_reads);
+        (path, load)
+    })
+}
+
+/// A budget finding for `path`, whose size is `measured` (the size, and what makes it
+/// differ from the file on disk), against `limit` in `unit`.
+fn budget(
+    probe: &'static str,
+    path: &Path,
+    measured: (usize, Option<String>),
+    limit: (&str, Budget),
+) -> Finding {
+    let (measure, note) = measured;
+    let (unit, budget) = limit;
+    let verdict = budget.verdict(measure);
+    let described = budget.describe(measure, unit);
+    let message = note.map_or_else(|| described.clone(), |note| format!("{described}, {note}"));
+    let finding = Finding::new(probe, verdict, path, message);
     if verdict > Verdict::Pass {
         finding.with_fix(
             "keep what every session needs; move workflow-specific sections into skills and \
@@ -226,19 +247,25 @@ fn budget(probe: &'static str, measured: (&str, usize), unit: &str, limit: Budge
     }
 }
 
-/// `AM05`: the root rules file is within the [`LINES`] budget.
+/// `AM05`: the root rules file, as loaded, is within the [`LINES`] budget.
 fn lines(snapshot: &Snapshot) -> Finding {
-    subject(snapshot).map_or_else(
+    loaded(snapshot).map_or_else(
         || no_subject("AM05"),
-        |(path, text)| budget("AM05", (path, TextSize::of(text).lines()), "lines", LINES),
+        |(path, load)| {
+            let measured = load.larger(TextSize::lines);
+            budget("AM05", Path::new(path), measured, ("lines", LINES))
+        },
     )
 }
 
-/// `AM06`: the root rules file is within the [`CHARS`] budget.
+/// `AM06`: the root rules file, as loaded, is within the [`CHARS`] budget.
 fn chars(snapshot: &Snapshot) -> Finding {
-    subject(snapshot).map_or_else(
+    loaded(snapshot).map_or_else(
         || no_subject("AM06"),
-        |(path, text)| budget("AM06", (path, TextSize::of(text).chars()), "chars", CHARS),
+        |(path, load)| {
+            let measured = load.larger(TextSize::chars);
+            budget("AM06", Path::new(path), measured, ("chars", CHARS))
+        },
     )
 }
 
@@ -373,7 +400,7 @@ mod tests {
     fn a_healthy_repository_passes_every_probe() {
         let report = check(&healthy());
         let probes: Vec<&str> = report.findings().iter().map(Finding::probe).collect();
-        let expected: Vec<String> = (1..=15).map(|n| format!("AM{n:02}")).collect();
+        let expected: Vec<String> = (1..=21).map(|n| format!("AM{n:02}")).collect();
         assert_eq!(probes, expected);
         assert_eq!(report.worst(), Verdict::Pass, "{report}");
     }

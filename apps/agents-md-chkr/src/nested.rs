@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use vitals_utils::{Finding, TextSize, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify, scope_dir};
+use crate::imports::{Imported, Load};
 use crate::probes::{CHARS, LINES, layout};
 use crate::snapshot::{Entry, Snapshot};
 
@@ -13,7 +14,7 @@ pub(crate) fn findings(snapshot: &Snapshot) -> Vec<Finding> {
     let nested = &snapshot.nested;
     [
         claude_only(nested),
-        budgets(nested),
+        budgets(snapshot),
         vec![rules_parity(snapshot)],
         unread(nested),
         vec![inventory(nested)],
@@ -79,9 +80,13 @@ fn shadowing(entry: &Entry, nested: &[Entry]) -> Option<Finding> {
     )
 }
 
-/// `AM10`: every nested instruction file is within the line and char budgets.
-fn budgets(nested: &[Entry]) -> Vec<Finding> {
-    let found = nested.iter().filter_map(over_budget).collect();
+/// `AM10`: every nested instruction file, as loaded, is within the line and char budgets.
+fn budgets(snapshot: &Snapshot) -> Vec<Finding> {
+    let found = snapshot
+        .nested
+        .iter()
+        .filter_map(|entry| over_budget(entry, &snapshot.imported))
+        .collect();
     or_pass(
         found,
         Finding::new(
@@ -93,22 +98,24 @@ fn budgets(nested: &[Entry]) -> Vec<Finding> {
     )
 }
 
-fn over_budget(entry: &Entry) -> Option<Finding> {
+fn over_budget(entry: &Entry, imported: &Imported) -> Option<Finding> {
     let text = entry.file.content.as_deref()?;
-    if kind(entry) == Some(Kind::Unread) {
+    let kind = kind(entry);
+    if kind == Some(Kind::Unread) {
         return None;
     }
-    let size = TextSize::of(text);
-    let verdict = LINES.verdict(size.lines()).max(CHARS.verdict(size.chars()));
+    let load = Load::of(&entry.path, text, imported, kind == Some(Kind::Agents));
+    let (lines, _) = load.larger(TextSize::lines);
+    let (chars, _) = load.larger(TextSize::chars);
+    let verdict = LINES.verdict(lines).max(CHARS.verdict(chars));
     (verdict > Verdict::Pass).then(|| {
         Finding::new(
             "AM10",
             verdict,
             &entry.path,
             format!(
-                "{} lines, {} chars (warn above {} lines; fail above {} lines or {} chars)",
-                size.lines(),
-                size.chars(),
+                "{lines} lines, {chars} chars as loaded (warn above {} lines; fail above {} lines \
+                 or {} chars)",
                 LINES.warn(),
                 LINES.fail(),
                 CHARS.fail()

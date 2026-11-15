@@ -109,7 +109,7 @@ fn a_clean_machine_passes_every_probe_including_user_scope() {
     assert!(line(&run, "[pass] AM15 (user scope) ..: no AGENTS.md above").is_some());
     assert!(
         run.stdout
-            .ends_with("agents-md gate passed: 0 fail, 0 warn, 13 pass, 2 n/a\n")
+            .ends_with("agents-md gate passed: 0 fail, 0 warn, 17 pass, 4 n/a\n")
     );
 }
 
@@ -153,6 +153,28 @@ fn home_files_are_judged_and_user_memory_is_exempt() {
         line(
             &run,
             "[warn] AM15 (user scope) /home/dev/work/.claude/AGENTS.md:"
+        )
+        .is_some()
+    );
+}
+
+#[test]
+#[ignore = "needs docker and the static binary: cargo xtask e2e"]
+fn a_managed_claude_md_is_reported_in_user_scope() {
+    let run = run_in_container(&[("etc/claude-code/CLAUDE.md", "# org policy\n")], &[]);
+    assert_eq!(run.code, Some(0), "{}", run.stdout);
+    let found = line(&run, "[warn] AM21 (user scope) /etc/claude-code/CLAUDE.md:").unwrap();
+    assert!(found.contains("OpenCode never reads it"), "{found}");
+    let clean = run_in_container(&[], &[]);
+    assert!(line(&clean, "[pass] AM21 (user scope) /etc/claude-code:").is_some());
+    let repo_only = run_in_container(
+        &[("etc/claude-code/CLAUDE.md", "# org\n")],
+        &["--repo-only"],
+    );
+    assert!(
+        line(
+            &repo_only,
+            "[n/a] AM21 (user scope) /etc/claude-code: skipped"
         )
         .is_some()
     );

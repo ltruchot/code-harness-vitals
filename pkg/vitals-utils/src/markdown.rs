@@ -108,11 +108,24 @@ pub fn code_spans(line: &str) -> impl Iterator<Item = &str> {
 
 /// The local targets of every inline Markdown link (`[text](target)`) outside code, with
 /// any `#fragment` or `?query` removed, in file order.
+#[must_use]
 pub fn link_targets(markdown: &str) -> Vec<String> {
+    links(markdown)
+        .into_iter()
+        .map(|(_, target)| target)
+        .collect()
+}
+
+/// [`link_targets`], each with the number of its line.
+#[must_use]
+pub fn links(markdown: &str) -> Vec<(usize, String)> {
     prose(markdown)
-        .flat_map(|line| outside_code(line.text))
-        .flat_map(links_in)
-        .filter_map(local)
+        .flat_map(|line| {
+            outside_code(line.text)
+                .flat_map(links_in)
+                .filter_map(local)
+                .map(move |target| (line.number, target))
+        })
         .collect()
 }
 
@@ -231,5 +244,9 @@ mod tests {
         let spans: Vec<&str> = code_spans("run `cargo test` then `cargo doc`").collect();
         assert_eq!(spans, ["cargo test", "cargo doc"]);
         assert_eq!(code_spans("no code").count(), 0);
+        assert_eq!(
+            super::links("a\n[x](y.md) [z](w.md)\n"),
+            [(2, "y.md".to_owned()), (2, "w.md".to_owned())]
+        );
     }
 }
