@@ -1,18 +1,9 @@
 # TODO
 
 ## Where we stopped
-- PR #1 (`gate/skills`, the skills gate) is merged into `main` by rebase, its review
-  findings fixed.
-- `gate/agents-md-content`, rebased on `main`, not pushed, no PR: the `AM05`–`AM07` fix,
-  the content probes `AM16`–`AM21`, ADR 4 facts `A1`–`A15`, the 22-criterion rubric, the
-  README TL;DR format, and the frontmatter and link scanner fixes from the PR #1 review.
-  `cargo xtask check` passes.
-Next actions, in order:
-1. Push `gate/agents-md-content`, open its draft PR (`.claude/skills/add-gate/PR.md`),
-   `code-review`, fix in new commits, `gh pr ready`, merge by rebase.
-2. `git branch -d gate/skills` locally and `git push origin --delete gate/skills`.
-3. The main checkout holds an older, uncommitted `TODO.md`: `git checkout TODO.md` there
-   before pulling; then `git worktree remove .claude/worktrees/agent-af7db5ec9d62615ce`.
+Nothing in progress. Both gates are on `main`: `agents-md` (`AM01`–`AM21`, PR #2) and
+`skills` (`SK01`–`SK15`, PR #1), each reviewed with `code-review high` and fixed.
+Next: pick an item below; the next gate is `codebase-memory` (`.claude/skills/add-gate/`).
 Verified: `cargo agents-md-chkr --repo-only` on a 393-line `CLAUDE.md`-only project reports
 `AM01` fail and `AM05`, `AM08`, `AM17`, `AM18`, `AM19` warn.
 Not verified: a user-scope run on this machine (it reads parent directories outside the
@@ -20,6 +11,7 @@ working directory); either review skill run from an installed copy.
 
 ## Later
 - Decide whether to commit `.claude/` (kaizen skill and `qol-mini.lock.json`); CI's `AM08` and `SK01` depend on it.
+- `agents-md`: source the open AGENTS.md format (agents.md, read by most coding agents) in ADR 4 and the review rubric; today only Claude Code and OpenCode behavior is sourced.
 - Distribute the review skills: a qol-mini bank entry, or an install command in the gate binaries.
 - `agents-md`: commands that do not exist (`/doctor prompt-audit` covers them in Claude Code), imports outside the repository, the `claudeMd` key of managed settings.
 - `agents-md`: instruction files inside ignored dependency directories (`node_modules/*/AGENTS.md` loads on read in both agents).
