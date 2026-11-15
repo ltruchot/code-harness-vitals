@@ -61,10 +61,11 @@ cargo agents-md-chkr --repo-only /path/to/repo  # CI: skip the parent directorie
 
 - [x] `AGENTS.md` is the rules file, and no `CLAUDE.md` hides it from Claude Code, in the
   repository or above it (`AM01`–`AM04`, `AM09`, `AM12`, `AM14`)
-- [x] Under budget as each agent loads it: 200 lines, 40,000 chars, imports and HTML
-  comments counted (`AM05`, `AM06`, `AM10`)
-- [x] A session after `/clear` resumes from `TODO.md`, and a kaizen skill turns friction
-  into rule edits (`AM07`, `AM08`)
+- [x] Under budget as each agent loads it: 200 lines as a target (imports and HTML comments
+  counted), 4 MiB for a file loaded at launch, 40,000 chars for a file loaded on demand
+  (`AM05`, `AM06`, `AM10`)
+- [x] Project convention, not an agent requirement: a session after `/clear` resumes from
+  `TODO.md`, and a kaizen skill turns friction into rule edits (`AM07`, `AM08`)
 - [x] Both agents get the same rules: `.claude/rules` and imported files listed for
   OpenCode, nothing only one agent reads (`AM11`, `AM12`, `AM15`, `AM16`, `AM21`)
 - [x] What the files point to exists: imports, repository paths, links, rule `paths`
@@ -85,6 +86,10 @@ hops), OpenCode injects the file verbatim, so an import in `AGENTS.md` never rea
 OpenCode unless `opencode.json` lists the file. The gate checks the whole cascade, in the
 repository and, as user-scope findings that never fail the gate, above it
 ([ADR 4](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md#the-agents-md-gate)).
+Every probe cites its source there; the cascade was checked against Claude Code 2.1.325
+itself, one throwaway repository per case ("Empirical checks"). `AGENTS.md` is the open
+format that over 20 coding agents read ([agents]): one file at the root, nested files for
+subprojects.
 
 **Why these checks.** Claude Code's docs target "under 200 lines per CLAUDE.md file.
 Longer files consume more context and reduce adherence", and ask for "markdown headers and
@@ -102,12 +107,12 @@ found that instruction following degrades as instructions accumulate, earlier on
 | `AM02` | root `CLAUDE.md` | fail: it has its own content, so Claude Code skips `AGENTS.md`; a bridge (`@AGENTS.md`) or a symlink passes | [memory] |
 | `AM03` | `.claude/CLAUDE.md` | fail: same as `AM02` (bridge: `@../AGENTS.md`) | [memory] |
 | `AM04` | `CLAUDE.local.md` | warn: present with no bridge, so Claude Code skips `AGENTS.md` on that machine | [memory] |
-| `AM05` | lines, as loaded | warn above 200, fail above 500 (`AGENTS.md`, else the `CLAUDE.md` that loads) | [memory]; 500: kaizen cap |
-| `AM06` | chars, as loaded | fail above 40,000 | [memory] |
+| `AM05` | lines, as loaded | warn above 200, never fail (`AGENTS.md`, else the `CLAUDE.md` that loads) | [memory] |
+| `AM06` | launch size | fail above 4 MiB: Claude Code skips the file | [memory] |
 | `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist | [qol-mini] convention |
-| `AM08` | continuous improvement | warn: no `kaizen` skill in `.claude/skills/` (Claude Code reads no other root); the fix points to [qol-mini] | [skills-docs] |
+| `AM08` | continuous improvement | warn: no `kaizen` skill in `.claude/skills/` (Claude Code reads no other root); the fix points to [qol-mini] | [qol-mini] convention; [skills-docs] for the root |
 | `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail: own rules that OpenCode never reads and that hide the sibling `AGENTS.md` from Claude Code; warn: nested `CLAUDE.local.md` | [memory], [oc] |
-| `AM10` | nested budgets | `AM05`/`AM06` on every nested instruction file and `.claude/rules` file | [memory] |
+| `AM10` | nested budgets | warn above 200 lines; fail above 40,000 chars for a file loaded on demand (subdirectory `CLAUDE.md`, subdirectory rules, rules with `paths`), above 4 MiB for the rest | [memory] |
 | `AM11` | `.claude/rules` parity | warn: rules files that `opencode.json` `instructions` does not list | [memory], [oc] |
 | `AM12` | names an agent skips | warn: `.claude/AGENTS.md`, `AGENTS.local.md`, `AGENTS.override.md`, `agents.md` | [memory], [oc] |
 | `AM13` | cascade inventory | lists every nested instruction file | - |
@@ -117,7 +122,7 @@ found that instruction following degrades as instructions accumulate, earlier on
 | `AM17` | structure | warn: a block (paragraph, list item, table row) over 400 chars; no heading in a file over 30 lines | [memory]; 400 and 30: project thresholds |
 | `AM18` | emphasis budget | warn: more than 3 markers (`IMPORTANT`, `MUST`, `NEVER`… in capitals, or bold inside a sentence) | [course], [best] |
 | `AM19` | references | warn: a backticked repository path or a relative link that resolves to nothing | [memory] (`/doctor prompt-audit`) |
-| `AM20` | rule `paths` | warn: unclosed frontmatter, a malformed `paths`, or a pattern that matches no file | [memory] |
+| `AM20` | rule `paths` | warn: unclosed or unparsable frontmatter (the rule then loads everywhere), a malformed `paths`, brace groups past 1,000 patterns, or a pattern that matches no file, matched as the docs specify (`*.md` at any depth, `/*.md` at the base) | [memory] |
 | `AM21` | user scope: managed `CLAUDE.md` | warn: `/etc/claude-code/CLAUDE.md` loads in every Claude Code session and no setting excludes it; OpenCode never reads it | [memory] |
 
 The review skill checks what probes cannot, against a 22-criterion rubric: real commands,
@@ -184,6 +189,7 @@ on Claude Code-only fields. To use it, copy `apps/skills-chkr/skills/skills-revi
 `.claude/skills/`, then ask your agent to review the skills.
 
 [memory]: https://code.claude.com/docs/en/memory
+[agents]: https://agents.md/
 [best]: https://code.claude.com/docs/en/best-practices
 [skills-docs]: https://code.claude.com/docs/en/skills
 [course]: https://campus.datacamp.com/courses/claude-code-in-action/configure-claude?ex=1

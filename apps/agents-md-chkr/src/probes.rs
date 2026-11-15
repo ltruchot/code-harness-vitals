@@ -12,18 +12,27 @@ use crate::{ancestors, content, nested, rules};
 /// Gate id.
 pub const GATE: &str = "agents-md";
 
-/// Line budget: warn above 200, fail above 500.
+/// Line budget: warn above 200, never fails.
 ///
-/// Claude Code memory docs: "target under 200 lines per CLAUDE.md file". 500 lines is the
-/// cap the kaizen skill sets for an always-loaded rules file.
-pub const LINES: Budget = Budget::new(200, 500);
+/// Claude Code memory docs, "Write effective instructions": "target under 200 lines per
+/// CLAUDE.md file. Longer files consume more context and reduce adherence". No source gives
+/// a length at which a file stops working, so the budget only warns.
+pub const LINES: Budget = Budget::soft(200);
 
-/// Char budget, fail only.
+/// Size budget of a file loaded at launch, in bytes: fail above 4 MiB.
 ///
-/// The per-file limit Claude Code applies to instruction files loaded on demand with a
-/// 200K context window (memory docs, "My CLAUDE.md is too large"); past it, Claude
-/// receives only the start of the file.
-pub const CHARS: Budget = Budget::hard(40_000);
+/// Claude Code memory docs, "How it works" (auto memory): "Claude gets the whole of each
+/// CLAUDE.md file that loads at launch, as long as the file is 4 MiB or smaller. Claude Code
+/// skips a file over 4 MiB and loads none of it."
+pub const LAUNCH_BYTES: Budget = Budget::hard(4 * 1024 * 1024);
+
+/// Size budget of a file loaded on demand, in chars: fail above 40,000.
+///
+/// Claude Code memory docs, "Claude ignores the end of my subdirectory CLAUDE.md": a
+/// subdirectory `CLAUDE.md` or `CLAUDE.local.md`, a subdirectory's rules file, or a
+/// path-scoped rule over the per-file limit reaches Claude only up to the limit: 40,000
+/// chars with a 200K context window, the smallest the docs list.
+pub const ON_DEMAND_CHARS: Budget = Budget::hard(40_000);
 
 /// How many leading lines of `AGENTS.md` must name the handoff file.
 pub const HANDOFF_WINDOW: usize = 10;
@@ -258,13 +267,26 @@ fn lines(snapshot: &Snapshot) -> Finding {
     )
 }
 
-/// `AM06`: the root rules file, as loaded, is within the [`CHARS`] budget.
+/// `AM06`: the root rules file is within [`LAUNCH_BYTES`], past which Claude Code skips it.
 fn chars(snapshot: &Snapshot) -> Finding {
-    loaded(snapshot).map_or_else(
+    subject(snapshot).map_or_else(
         || no_subject("AM06"),
-        |(path, load)| {
-            let measured = load.larger(TextSize::chars);
-            budget("AM06", Path::new(path), measured, ("chars", CHARS))
+        |(path, text)| {
+            let verdict = LAUNCH_BYTES.verdict(text.len());
+            let finding = Finding::new(
+                "AM06",
+                verdict,
+                path,
+                LAUNCH_BYTES.describe(text.len(), "bytes"),
+            );
+            if verdict > Verdict::Pass {
+                finding.with_fix(
+                    "Claude Code skips a file over 4 MiB and loads none of it: move detail into \
+                     docs the rules file links to, and workflow sections into skills",
+                )
+            } else {
+                finding
+            }
         },
     )
 }
@@ -349,7 +371,7 @@ fn kaizen(snapshot: &Snapshot) -> Finding {
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
 mod tests {
-    use super::{CHARS, LINES, check};
+    use super::{LAUNCH_BYTES, LINES, check};
     use crate::snapshot::{RulesFile, Snapshot};
     use std::path::PathBuf;
     use vitals_utils::{Finding, Outcome, Verdict};
@@ -537,28 +559,30 @@ mod tests {
     fn line_budget_edges() {
         assert_eq!(verdict(&sized(LINES.warn(), 1), "AM05"), Verdict::Pass);
         assert_eq!(verdict(&sized(LINES.warn() + 1, 1), "AM05"), Verdict::Warn);
-        assert_eq!(verdict(&sized(LINES.fail(), 1), "AM05"), Verdict::Warn);
-        assert_eq!(verdict(&sized(LINES.fail() + 1, 1), "AM05"), Verdict::Fail);
+        // No source gives a length at which a file stops working: the budget never fails.
+        assert_eq!(verdict(&sized(5_000, 1), "AM05"), Verdict::Warn);
     }
 
     #[test]
-    fn char_budget_edges() {
-        let at_limit = Snapshot {
-            agents_md: Some(format!(
-                "{HANDOFF}{}",
-                "x".repeat(CHARS.fail() - HANDOFF.len())
-            )),
+    fn launch_size_edges() {
+        let of_bytes = |bytes: usize| Snapshot {
+            agents_md: Some(format!("{HANDOFF}{}", "x".repeat(bytes - HANDOFF.len()))),
             ..healthy()
         };
-        assert_eq!(verdict(&at_limit, "AM06"), Verdict::Pass);
-        assert_eq!(verdict(&sized(100, 500), "AM06"), Verdict::Fail);
-        let report = check(&sized(100, 500));
-        let chars = report
+        // 40,000 chars only bound files loaded on demand; a root file loads whole.
+        assert_eq!(verdict(&of_bytes(64_000), "AM06"), Verdict::Pass);
+        assert_eq!(
+            verdict(&of_bytes(LAUNCH_BYTES.fail()), "AM06"),
+            Verdict::Pass
+        );
+        let over = check(&of_bytes(LAUNCH_BYTES.fail() + 1));
+        let size = over
             .findings()
             .iter()
             .find(|f| f.probe() == "AM06")
             .unwrap();
-        assert!(chars.fix().unwrap().contains("skills"));
+        assert_eq!(size.verdict(), Verdict::Fail);
+        assert!(size.fix().unwrap().contains("4 MiB"));
     }
 
     #[test]

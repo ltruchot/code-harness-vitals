@@ -58,8 +58,8 @@ fn a_healthy_repository_prints_every_probe_and_exits_zero() {
          [pass] AM02 CLAUDE.md: absent: nothing shadows AGENTS.md\n\
          [pass] AM03 .claude/CLAUDE.md: absent: nothing shadows AGENTS.md\n\
          [pass] AM04 CLAUDE.local.md: absent\n\
-         [pass] AM05 AGENTS.md: 3 lines (warn above 200, fail above 500)\n\
-         [pass] AM06 AGENTS.md: 50 chars (fail above 40000)\n\
+         [pass] AM05 AGENTS.md: 3 lines (warn above 200)\n\
+         [pass] AM06 AGENTS.md: 50 bytes (fail above 4194304)\n\
          [pass] AM07 AGENTS.md: opens by sending each session to TODO.md\n\
          [pass] AM08 .claude/skills/kaizen/SKILL.md: kaizen skill present\n\
          [pass] AM09 .: no nested CLAUDE.md holds its own rules\n\
@@ -107,7 +107,7 @@ fn without_agents_md_the_budgets_judge_the_claude_md_that_loads() {
         .assert()
         .code(1)
         .stdout(contains(
-            "[warn] AM05 CLAUDE.md: 253 lines (warn above 200, fail above 500)",
+            "[warn] AM05 CLAUDE.md: 253 lines (warn above 200)",
         ))
         .stdout(contains("[pass] AM06 CLAUDE.md"))
         .stdout(contains(
@@ -123,7 +123,7 @@ fn imports_count_toward_the_budget_and_opencode_must_list_them() {
     gate(&dir)
         .code(0)
         .stdout(contains(
-            "[warn] AM05 AGENTS.md: 254 lines (warn above 200, fail above 500), as Claude Code \
+            "[warn] AM05 AGENTS.md: 254 lines (warn above 200), as Claude Code \
              loads it, with 1 imported file",
         ))
         .stdout(contains(
@@ -180,7 +180,7 @@ fn html_comments_count_for_opencode_only() {
     gate(&repo(&[("AGENTS.md", &agents)]))
         .code(0)
         .stdout(contains(
-            "[warn] AM05 AGENTS.md: 255 lines (warn above 200, fail above 500), as OpenCode \
+            "[warn] AM05 AGENTS.md: 255 lines (warn above 200), as OpenCode \
              loads it, HTML comments included",
         ));
 }
@@ -305,20 +305,31 @@ fn a_local_file_warns_without_failing() {
 }
 
 #[test]
-fn line_and_char_budgets_apply_to_the_root_file() {
+fn line_and_size_budgets_apply_to_the_root_file() {
     let lines = |count: usize| format!("{HANDOFF}{}", "x\n".repeat(count - 3));
     gate(&repo(&[("AGENTS.md", &lines(201))]))
         .code(0)
-        .stdout(contains("[warn] AM05 AGENTS.md: 201 lines"));
+        .stdout(contains(
+            "[warn] AM05 AGENTS.md: 201 lines (warn above 200)",
+        ));
     gate(&repo(&[("AGENTS.md", &lines(501))]))
-        .code(1)
-        .stdout(contains("[fail] AM05 AGENTS.md: 501 lines"));
+        .code(0)
+        .stdout(contains("[warn] AM05 AGENTS.md: 501 lines"));
+    // A root file loads whole up to 4 MiB: 64,000 chars pass.
     gate(&repo(&[(
         "AGENTS.md",
-        &format!("{HANDOFF}{}", "x".repeat(40_000)),
+        &format!("{HANDOFF}{}", "x".repeat(64_000)),
+    )]))
+    .code(0)
+    .stdout(contains("[pass] AM06 AGENTS.md: 64050 bytes"));
+    gate(&repo(&[(
+        "AGENTS.md",
+        &format!("{HANDOFF}{}", "x".repeat(4 * 1024 * 1024)),
     )]))
     .code(1)
-    .stdout(contains("[fail] AM06 AGENTS.md: 40050 chars"));
+    .stdout(contains(
+        "[fail] AM06 AGENTS.md: 4194354 bytes (fail above 4194304)",
+    ));
 }
 
 #[test]
@@ -400,12 +411,17 @@ fn ignored_and_worktree_directories_are_not_part_of_the_cascade() {
 fn nested_budgets_apply_to_every_cascade_file() {
     gate(&repo(&[
         ("pkg/AGENTS.md", &"x\n".repeat(250)),
-        (".claude/rules/big.md", &"x".repeat(40_001)),
+        (
+            ".claude/rules/big.md",
+            &format!("---\npaths: src/**\n---\n{}", "x".repeat(40_001)),
+        ),
+        ("src/a.ts", ""),
     ]))
     .code(1)
     .stdout(contains("[warn] AM10 pkg/AGENTS.md: 250 lines"))
     .stdout(contains(
-        "[fail] AM10 .claude/rules/big.md: 1 lines, 40001 chars",
+        "[fail] AM10 .claude/rules/big.md: 4 lines as loaded, 40023 chars (warn above 200 \
+         lines; fail above 40000 chars, loaded on demand)",
     ));
 }
 

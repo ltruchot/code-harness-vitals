@@ -3,11 +3,13 @@
 
 use std::path::{Path, PathBuf};
 
+use vitals_utils::frontmatter;
 use vitals_utils::{Finding, TextSize, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify, scope_dir};
 use crate::imports::{Imported, Load};
-use crate::probes::{CHARS, LINES, layout};
+use crate::probes::{LAUNCH_BYTES, LINES, ON_DEMAND_CHARS, layout};
+use crate::rules;
 use crate::snapshot::{Entry, Snapshot};
 
 pub(crate) fn findings(snapshot: &Snapshot) -> Vec<Finding> {
@@ -106,26 +108,58 @@ fn over_budget(entry: &Entry, imported: &Imported) -> Option<Finding> {
     }
     let load = Load::of(&entry.path, text, imported, kind == Some(Kind::Agents));
     let (lines, _) = load.larger(TextSize::lines);
-    let (chars, _) = load.larger(TextSize::chars);
-    let verdict = LINES.verdict(lines).max(CHARS.verdict(chars));
+    // The per-file limit applies to the file itself (`wc -m`, memory docs).
+    let chars = TextSize::of(text).chars();
+    let limited = on_demand(entry);
+    let size = if limited {
+        ON_DEMAND_CHARS.verdict(chars)
+    } else {
+        LAUNCH_BYTES.verdict(text.len())
+    };
+    let verdict = LINES.verdict(lines).max(size);
     (verdict > Verdict::Pass).then(|| {
+        let limit = if limited {
+            format!(
+                "fail above {} chars, loaded on demand",
+                ON_DEMAND_CHARS.fail()
+            )
+        } else {
+            format!("fail above {} bytes", LAUNCH_BYTES.fail())
+        };
         Finding::new(
             "AM10",
             verdict,
             &entry.path,
             format!(
-                "{lines} lines, {chars} chars as loaded (warn above {} lines; fail above {} lines \
-                 or {} chars)",
+                "{lines} lines as loaded, {chars} chars (warn above {} lines; {limit})",
                 LINES.warn(),
-                LINES.fail(),
-                CHARS.fail()
             ),
         )
         .with_fix(
-            "split it: past the char limit Claude Code sends only the start of a file it loads \
-             on demand",
+            "split it: past the per-file limit Claude Code sends only the start of a file it \
+             loads on demand",
         )
     })
+}
+
+/// Whether Claude Code loads the file on demand, under the per-file limit: a `CLAUDE.md` or
+/// `CLAUDE.local.md` below the root, a rules file in a subdirectory's `.claude/rules/`, or a
+/// rule with `paths` (memory docs, "Claude ignores the end of my subdirectory CLAUDE.md").
+/// A subdirectory `AGENTS.md` is not in the docs' list.
+fn on_demand(entry: &Entry) -> bool {
+    match kind(entry) {
+        Some(Kind::Claude | Kind::DotClaude | Kind::ClaudeLocal) => true,
+        Some(Kind::Rule) => {
+            let nested = rules::scope_of(&entry.path) != Path::new("");
+            let scoped = entry
+                .file
+                .content
+                .as_deref()
+                .is_some_and(|text| frontmatter::read(text).items("paths").is_some());
+            nested || scoped
+        }
+        _ => false,
+    }
 }
 
 /// `AM11`: `.claude/rules/` files, which only Claude Code loads, are also given to `OpenCode`.
@@ -315,9 +349,16 @@ mod tests {
     fn nested_budgets_flag_each_oversized_file() {
         let long = "x\n".repeat(201);
         let huge = "x".repeat(40_001);
+        let scoped = format!("---\npaths: src/**\n---\n{huge}");
         let found = run(vec![
             file("a/AGENTS.md", &long),
+            // A root rule without `paths` loads at launch, whole: 4 MiB is its limit.
             file(".claude/rules/big.md", &huge),
+            file(".claude/rules/scoped.md", &scoped),
+            file("pkg/.claude/rules/sub.md", &huge),
+            file("d/CLAUDE.local.md", &huge),
+            // The docs list no per-file limit for a subdirectory AGENTS.md.
+            file("e/AGENTS.md", &huge),
             file("b/agents.md", &huge),
             file("c/AGENTS.md", "short\n"),
         ]);
@@ -325,7 +366,9 @@ mod tests {
             of(&found, "AM10"),
             [
                 (Verdict::Warn, "a/AGENTS.md".to_owned()),
-                (Verdict::Fail, ".claude/rules/big.md".to_owned()),
+                (Verdict::Fail, ".claude/rules/scoped.md".to_owned()),
+                (Verdict::Fail, "pkg/.claude/rules/sub.md".to_owned()),
+                (Verdict::Fail, "d/CLAUDE.local.md".to_owned()),
             ]
         );
     }

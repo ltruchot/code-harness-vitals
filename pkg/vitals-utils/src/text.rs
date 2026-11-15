@@ -63,6 +63,15 @@ impl Budget {
         Self::new(limit, limit)
     }
 
+    /// A budget that warns above `limit` and never fails: a target with a source but no
+    /// documented breaking point.
+    pub const fn soft(limit: usize) -> Self {
+        Self {
+            warn: limit,
+            fail: usize::MAX,
+        }
+    }
+
     /// The warn threshold.
     #[must_use]
     pub const fn warn(&self) -> usize {
@@ -84,10 +93,13 @@ impl Budget {
     ///
     /// assert_eq!(Budget::new(200, 500).describe(12, "lines"), "12 lines (warn above 200, fail above 500)");
     /// assert_eq!(Budget::hard(40).describe(41, "chars"), "41 chars (fail above 40)");
+    /// assert_eq!(Budget::soft(200).describe(201, "lines"), "201 lines (warn above 200)");
     /// ```
     #[must_use]
     pub fn describe(&self, measure: usize, unit: &str) -> String {
-        if self.warn < self.fail {
+        if self.fail == usize::MAX {
+            format!("{measure} {unit} (warn above {})", self.warn)
+        } else if self.warn < self.fail {
             format!(
                 "{measure} {unit} (warn above {}, fail above {})",
                 self.warn, self.fail

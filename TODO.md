@@ -1,17 +1,16 @@
 # TODO
 
 ## Where we stopped
-Nothing in progress. Both gates are on `main`: `agents-md` (`AM01`–`AM21`, PR #2) and
-`skills` (`SK01`–`SK15`, PR #1), each reviewed with `code-review high` and fixed.
-Next: pick an item below; the next gate is `codebase-memory` (`.claude/skills/add-gate/`).
-Verified: `cargo agents-md-chkr --repo-only` on a 393-line `CLAUDE.md`-only project reports
-`AM01` fail and `AM05`, `AM08`, `AM17`, `AM18`, `AM19` warn.
-Not verified: a user-scope run on this machine (it reads parent directories outside the
-working directory); either review skill run from an installed copy.
+Branch `fix/agents-md-sources`, not pushed: every `agents-md` probe now cites a fact (`L`,
+`A`, `G` in ADR 4) or says **convention**; the cascade was checked with `claude -p` on
+Claude Code 2.1.325 ("Empirical checks"). `AM05` warns only, `AM06` checks the 4 MiB launch
+limit, `AM10` applies 40,000 chars to on-demand files only, `AM20` matches `paths` as the
+docs' table says. `.claude/` is committed (home path written `$HOME`).
+Next: push, open the PR, `code-review`, merge.
+Not verified: a user-scope run on this machine; either review skill run from an installed
+copy; whether qol-mini accepts the kaizen files with `$HOME` written in (its hashes predate it).
 
 ## Later
-- Decide whether to commit `.claude/` (kaizen skill and `qol-mini.lock.json`); CI's `AM08` and `SK01` depend on it.
-- `agents-md`: source the open AGENTS.md format (agents.md, read by most coding agents) in ADR 4 and the review rubric; today only Claude Code and OpenCode behavior is sourced.
 - Distribute the review skills: a qol-mini bank entry, or an install command in the gate binaries.
 - `agents-md`: commands that do not exist (`/doctor prompt-audit` covers them in Claude Code), imports outside the repository, the `claudeMd` key of managed settings.
 - `agents-md`: instruction files inside ignored dependency directories (`node_modules/*/AGENTS.md` loads on read in both agents).

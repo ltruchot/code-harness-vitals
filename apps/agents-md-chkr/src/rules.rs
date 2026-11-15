@@ -8,11 +8,15 @@
 use std::path::{Path, PathBuf};
 
 use globset::{GlobBuilder, GlobMatcher};
-use vitals_utils::frontmatter::{self, Frontmatter};
+use vitals_utils::frontmatter::{self, Field, Frontmatter, Mistake};
 use vitals_utils::{Finding, Verdict, or_pass};
 
 use crate::cascade::{Kind, classify};
 use crate::snapshot::{Entry, Snapshot};
+
+/// How many patterns the brace groups of one rule's `paths` may expand to (memory docs,
+/// "Path-specific rules"); past it, Claude Code uses the braced patterns unexpanded.
+const BRACE_BUDGET: usize = 1_000;
 
 pub(crate) fn finding(snapshot: &Snapshot) -> Vec<Finding> {
     let rules: Vec<&Entry> = snapshot
@@ -56,6 +60,17 @@ fn judge(rule: &Entry, snapshot: &Snapshot) -> Option<Finding> {
         ));
     }
     let field = front.field("paths")?;
+    if let Some(broken) = yaml_mistake(&front) {
+        return Some(warn(
+            format!(
+                "line {}: YAML rejects this frontmatter (the value {}), so Claude Code ignores \
+                 it and loads the rule in every session",
+                broken.line,
+                broken.mistake.map_or("", Mistake::reason)
+            ),
+            "quote the value, or fix the YAML, so that `paths` scopes the rule",
+        ));
+    }
     let Some(patterns) = front.items("paths") else {
         return Some(warn(
             format!(
@@ -66,15 +81,77 @@ fn judge(rule: &Entry, snapshot: &Snapshot) -> Option<Finding> {
              in every session",
         ));
     };
+    patterns_finding(rule, field.line, &patterns, snapshot)
+}
+
+/// The brace budget, then the patterns that match no file.
+fn patterns_finding(
+    rule: &Entry,
+    line: usize,
+    patterns: &[String],
+    snapshot: &Snapshot,
+) -> Option<Finding> {
+    let expanded: usize = patterns.iter().map(|pattern| expansions(pattern)).sum();
+    if expanded > BRACE_BUDGET {
+        return Some(
+            Finding::new(
+                "AM20",
+                Verdict::Warn,
+                &rule.path,
+                format!(
+                    "line {line}: the brace groups of `paths` expand to {expanded} patterns \
+                     (budget {BRACE_BUDGET}), so Claude Code uses them unexpanded and they match \
+                     no file"
+                ),
+            )
+            .with_fix("split the brace groups into fewer, broader patterns"),
+        );
+    }
     let scope = scope_of(&rule.path);
     let dead: Vec<String> = patterns
-        .into_iter()
+        .iter()
         .filter(|pattern| {
             !matches_any(pattern, scope, &snapshot.files)
                 && !snapshot.hidden.contains(&base(scope, pattern))
         })
+        .cloned()
         .collect();
-    (!dead.is_empty()).then(|| dead_patterns(rule, field.line, &dead))
+    (!dead.is_empty()).then(|| dead_patterns(rule, line, &dead))
+}
+
+/// The first field whose value YAML rejects.
+fn yaml_mistake(front: &Frontmatter) -> Option<&Field> {
+    match front {
+        Frontmatter::Fields(fields) => fields.iter().find(|field| field.mistake.is_some()),
+        Frontmatter::Missing | Frontmatter::Unclosed => None,
+    }
+}
+
+/// How many patterns the brace groups of `pattern` expand to; 0 without braces, which do
+/// not count against the budget (memory docs, "Path-specific rules").
+fn expansions(pattern: &str) -> usize {
+    let mut depth = 0_usize;
+    let mut total = 1_usize;
+    let mut options = 0_usize;
+    let mut braced = false;
+    for c in pattern.chars() {
+        match (c, depth) {
+            ('{', 0) => {
+                depth = 1;
+                options = 1;
+                braced = true;
+            }
+            ('{', _) => depth = depth.saturating_add(1),
+            (',', 1) => options = options.saturating_add(1),
+            ('}', 1) => {
+                depth = 0;
+                total = total.saturating_mul(options);
+            }
+            ('}', 2..) => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    if braced { total } else { 0 }
 }
 
 fn dead_patterns(rule: &Entry, line: usize, dead: &[String]) -> Finding {
@@ -96,7 +173,7 @@ fn dead_patterns(rule: &Entry, line: usize, dead: &[String]) -> Finding {
 
 /// The directory that the patterns of the rule at `path` are relative to: the one that
 /// holds its `.claude/`.
-fn scope_of(path: &Path) -> &Path {
+pub(crate) fn scope_of(path: &Path) -> &Path {
     path.ancestors()
         .find(|dir| dir.file_name() == Some(".claude".as_ref()))
         .and_then(Path::parent)
@@ -106,12 +183,13 @@ fn scope_of(path: &Path) -> &Path {
 /// The literal directory that `pattern` starts with, relative to the repository root:
 /// `scope/dist` for `dist/**/*.js`; `scope` itself when the pattern opens with a glob.
 fn base(scope: &Path, pattern: &str) -> PathBuf {
-    let literal: PathBuf = normalized(pattern)
+    let glob = effective(pattern);
+    let literal: PathBuf = glob
         .split('/')
         .take_while(|part| !part.contains(['*', '?', '[', '{']))
         .collect();
     // The last literal part may name a file (`docs/a.md`): keep the directories only.
-    let dirs = if normalized(pattern).contains(['*', '?', '[', '{']) {
+    let dirs = if glob.contains(['*', '?', '[', '{']) {
         literal
     } else {
         literal
@@ -142,9 +220,21 @@ pub(crate) fn bases(nested: &[Entry]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// `pattern` without a leading `./`.
-fn normalized(pattern: &str) -> &str {
-    pattern.strip_prefix("./").unwrap_or(pattern)
+/// `pattern` as Claude Code matches it (memory docs, "Path-specific rules"), relative to the
+/// base directory: a leading `./` is dropped, a leading `/` anchors it at the base
+/// (`/*.md`), and a pattern without `/` matches at any depth (`*.md`: `.md` files anywhere).
+fn effective(pattern: &str) -> String {
+    let pattern = pattern.strip_prefix("./").unwrap_or(pattern);
+    pattern.strip_prefix('/').map_or_else(
+        || {
+            if pattern.contains('/') {
+                pattern.to_owned()
+            } else {
+                format!("**/{pattern}")
+            }
+        },
+        str::to_owned,
+    )
 }
 
 fn matches_any(pattern: &str, scope: &Path, files: &[PathBuf]) -> bool {
@@ -159,7 +249,7 @@ fn matches_any(pattern: &str, scope: &Path, files: &[PathBuf]) -> bool {
 /// `pattern` as Claude Code's examples use it: `*` stops at `/`, `**` crosses it, braces
 /// expand. `None` when it is not a valid glob.
 fn matcher(pattern: &str) -> Option<GlobMatcher> {
-    GlobBuilder::new(normalized(pattern))
+    GlobBuilder::new(&effective(pattern))
         .literal_separator(true)
         .build()
         .ok()
@@ -237,6 +327,43 @@ mod tests {
         assert!(found[0].1.contains("for it"));
         let clean = run(vec![rule(".claude/rules/all.md", "# Everywhere\n")]);
         assert_eq!(clean[0].0, Verdict::Pass);
+    }
+
+    #[test]
+    fn patterns_match_as_the_docs_table_says() {
+        // `*.tsx` matches anywhere; `/*.ts` only directly in the base directory.
+        let found = run(vec![rule(
+            ".claude/rules/a.md",
+            "---\npaths: [\"*.tsx\", \"**/*.ts\", \"/*.ts\", \"src/api/*.ts\"]\n---\n",
+        )]);
+        assert_eq!(found.len(), 1);
+        assert!(
+            found[0].1.contains("`/*.ts` matches no file"),
+            "{}",
+            found[0].1
+        );
+    }
+
+    #[test]
+    fn a_yaml_error_or_a_brace_budget_overrun_warns() {
+        let broken = run(vec![rule(
+            ".claude/rules/a.md",
+            "---\npaths: src/**\ndescription: Use when: editing\n---\n",
+        )]);
+        assert!(broken[0].1.contains("YAML rejects"), "{}", broken[0].1);
+        assert!(broken[0].1.contains("every session"));
+        let group = "{a,b,c,d,e,f,g,h,i,j}";
+        let braces = run(vec![rule(
+            ".claude/rules/b.md",
+            &format!("---\npaths: [\"src/{group}/{group}/{group}/*.ts\", \"x/{group}.rs\"]\n---\n"),
+        )]);
+        assert!(
+            braces[0].1.contains("expand to 1010 patterns"),
+            "{}",
+            braces[0].1
+        );
+        assert_eq!(super::expansions("src/**/*.ts"), 0);
+        assert_eq!(super::expansions("{a,{b,c}}/*.{ts,tsx}"), 4);
     }
 
     #[test]
