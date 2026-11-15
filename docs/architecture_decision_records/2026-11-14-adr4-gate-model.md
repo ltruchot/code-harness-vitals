@@ -14,6 +14,7 @@ the ADR 3 stack. The first gate, `agents-md`, proves the model.
 | `agents-md` gate: probes                    | ✅ Done    | `apps/agents-md-chkr/`                     |
 | `agents-md` gate: review skill              | ✅ Done    | `apps/agents-md-chkr/skills/agents-md-review/` |
 | `agents-md` gate: cascade probes            | ✅ Done    | `apps/agents-md-chkr/src/{cascade,nested,ancestors}.rs` |
+| `agents-md` gate: content probes (`AM16`–`AM21`) | ⏳ Planned | `apps/agents-md-chkr/src/{imports,content}.rs` |
 | Container end-to-end tests                  | ✅ Done    | `apps/*-chkr/tests/container.rs`           |
 | `skills` gate: probes                       | ✅ Done    | `apps/skills-chkr/`                        |
 | `skills` gate: review skill                 | ✅ Done    | `apps/skills-chkr/skills/skills-review/`   |
@@ -119,17 +120,23 @@ different rules with nothing in the repository to show it.
 | `AM02` | root `CLAUDE.md` does not shadow `AGENTS.md` | pass when absent, a bridge, or a link to `AGENTS.md`; fail when it has its own content |
 | `AM03` | `.claude/CLAUDE.md` does not shadow `AGENTS.md` | same as `AM02`, with `@../AGENTS.md` as the bridge |
 | `AM04` | no `CLAUDE.local.md` that makes Claude Code skip `AGENTS.md` | warn when present without a bridge |
-| `AM05` | line budget | warn above 200 lines (the Claude Code memory docs target), fail above 500 |
-| `AM06` | char budget | fail above 40,000 chars, the per-file limit Claude Code applies to instruction files loaded on demand (200K context window) |
+| `AM05` | line budget | warn above 200 lines (the Claude Code memory docs target), fail above 500; measured on what loads (below) |
+| `AM06` | char budget | fail above 40,000 chars, the per-file limit Claude Code applies to instruction files loaded on demand (200K context window); measured on what loads |
 | `AM07` | resume after `/clear` or a compaction | warn unless the first 10 lines name `TODO.md` and `TODO.md` exists |
 | `AM08` | continuous improvement | warn unless a `kaizen` skill exists in `.claude/skills/`, the only skill root both agents read (Claude Code never reads `.agents/skills/` or `.opencode/skills/`); the fix suggests qol-mini, or a symbolic link into `.claude/skills/` |
 | `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail for each one with its own rules (OpenCode never reads it; Claude Code skips the sibling `AGENTS.md`); warn for a nested `CLAUDE.local.md`; bridges and links pass |
-| `AM10` | nested budgets | `AM05`/`AM06` budgets applied to every nested instruction file and every `.claude/rules` file |
+| `AM10` | nested budgets | `AM05`/`AM06` budgets, measured the same way, applied to every nested instruction file and every `.claude/rules` file |
 | `AM11` | `.claude/rules` parity | warn when rules files exist and `opencode.json[c]` does not list `.claude/rules` |
 | `AM12` | names an agent skips | warn for `.claude/AGENTS.md` (Claude Code only), `AGENTS.local.md`, `AGENTS.override.md`, and case variants such as `agents.md` |
 | `AM13` | cascade inventory | lists every nested instruction file, for the review to read |
 | `AM14` | user scope: `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` in a parent directory (except `~/.claude/CLAUDE.md`) | warn: Claude Code loads it and, without a bridge in the repository, skips every `AGENTS.md` |
 | `AM15` | user scope: `AGENTS.md`, `.claude/AGENTS.md` in a parent directory | warn: rules that teammates and CI do not have |
+| `AM16` | `@path` imports | warn per import: no file at the target; beyond four hops (Claude Code stops there); in an `AGENTS.md`, a target that `opencode.json[c]` does not list (OpenCode 2 reads the line as text and never loads the file) |
+| `AM17` | structure | warn per file: a block (paragraph, list item with its continuation lines, table row) over 400 chars; no heading in a file over 30 lines |
+| `AM18` | emphasis budget | warn per file: more than 3 emphasis markers |
+| `AM19` | references resolve | warn per file: a backticked repository path or a relative Markdown link that resolves to nothing |
+| `AM20` | `.claude/rules` `paths` | warn per rule: unclosed frontmatter, a `paths` value that is neither a string nor a list, or a pattern that matches no file in the repository (the rule never loads) |
+| `AM21` | user scope: managed `CLAUDE.md` | warn when `/etc/claude-code/CLAUDE.md` or `/Library/Application Support/ClaudeCode/CLAUDE.md` exists: Claude Code loads it in every session and it cannot be excluded; OpenCode never reads it |
 
 `AM05`–`AM07` judge `AGENTS.md` or, when there is none, the root `CLAUDE.md` (else
 `.claude/CLAUDE.md`) that Claude Code loads in its place.
@@ -143,12 +150,67 @@ fail, and never change the exit status. `--repo-only` skips them for reproducibl
 equivalents under other names (rubric criteria 12 and 13) and suggests
 [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) when there is none.
 
-Not probed yet: `@import` resolution and depth, backticked paths and commands that do
-not resolve, `paths` frontmatter of rules, instruction files inside ignored dependency
-directories (`node_modules/*/AGENTS.md` loads when an agent reads a file there), sessions
-started in a subdirectory instead of the root, the Claude Code **Project instructions**
-setting (`claude-md-and-agents-md` loads both families) and `claudeMdExcludes`, which live
-in user settings, and JSON/SARIF output.
+**What loads.** The two agents do not load the same text from one file. Claude Code removes
+block-level HTML comments and expands `@path` imports in place (four hops at most); OpenCode
+2 injects the file verbatim, comments and `@path` lines included. `AM05`, `AM06`, and `AM10`
+measure both views and judge the larger; their message gives the Claude Code view when
+imports or comments make it differ. Imports are followed inside the repository only: a
+target in the home directory or elsewhere depends on each machine and is not measured.
+
+**Content probes.** `AM16`–`AM19` judge the root rules file and every nested instruction
+file that an agent reads. They count syntax whose effect a source documents; they never
+judge meaning, which stays with the review.
+
+- A **block** is a paragraph, a list item with its continuation lines, or a table row,
+  outside fenced code and HTML comments. 400 chars is about 100 tokens, four lines of 100
+  columns. Anthropic gives the direction ("organized sections are easier for Claude to
+  follow than dense paragraphs") but no number: 400 and the 30-line heading floor are this
+  project's thresholds.
+- An **emphasis marker** is, outside code: one of `IMPORTANT`, `MUST`, `NEVER`, `ALWAYS`,
+  `CRITICAL`, `MANDATORY`, `REQUIRED`, `JAMAIS`, `TOUJOURS`, `OBLIGATOIRE`, `IMPÉRATIF`,
+  `INTERDIT` written in capitals, or a bold span inside a sentence. A bold span that opens
+  its paragraph, list item, or table cell is a label, not emphasis. The budget of 3 is
+  the "two or three rules that hurt when broken" of Anthropic's Claude Code course.
+- A **repository path** is a code span without spaces that holds a `/`, whose first
+  segment exists in the repository, and that holds none of `<>*{}$:=`. A path whose first
+  segment does not exist (`/etc/fstab`, `rtl_nic/fw.bin`, a directory still to create) is
+  not judged.
+- `AM20` matches `paths` patterns with `globset` (`*` stops at `/`, `**` crosses it, braces
+  expand) against the repository files, relative to the directory that holds `.claude/`.
+
+#### Sourced facts (content)
+
+Read on 2026-11-15. A fact marked **no** feeds the review or "Not probed yet", never a
+probe.
+
+| # | Fact | Agent | Source | Confirmed |
+| --- | --- | --- | --- | --- |
+| A1 | "target under 200 lines per CLAUDE.md file. Longer files consume more context and reduce adherence" | Claude Code | memory docs, "Write effective instructions" | yes |
+| A2 | imports load at launch with the file that imports them and "don't reduce its context cost"; four hops at most; relative to the importing file; skipped in code spans and fenced code blocks; a quoted path is not imported; `\ ` escapes a space | Claude Code | memory docs, "Import additional files" | yes |
+| A3 | block-level HTML comments are stripped before injection; comments inside code blocks are kept | Claude Code | memory docs, "How CLAUDE.md files load" | yes |
+| A4 | an `AGENTS.md` is injected as `Instructions from: <path>` followed by its content, unchanged: no import expansion, no comment stripping | OpenCode 2 | `instruction-discovery.ts` (`render`), `config/plugin/instruction.ts` (`read`) at `d759c548aa` | yes |
+| A5 | "group related instructions under markdown headers and bullets. Organized sections are easier for Claude to follow than dense paragraphs" | Claude Code | memory docs, "Write effective instructions" | yes |
+| A6 | emphasis (`IMPORTANT`, `YOU MUST`) raises a rule's priority only relative to the quieter text around it: spend it on the two or three rules that hurt when broken | Claude Code | Claude Code in Action course, "Configure Claude" | yes |
+| A7 | "If Claude keeps ignoring a line that is in CLAUDE.md, adding IMPORTANT probably won't fix it": the file is too long, or the rule belongs in a hook | Claude Code | best-practices docs, "Keep CLAUDE.md short" | yes |
+| A8 | a rule with zero exceptions belongs in a hook, a deny rule, or a managed setting; `CLAUDE.md` holds guidelines | Claude Code | best-practices docs; memory docs, "CLAUDE.md vs auto memory" | yes |
+| A9 | `/doctor prompt-audit` reports instructions written for older models, references to files or commands that do not exist, and contradictions | Claude Code | memory docs, "Audit your instruction files" | yes |
+| A10 | `paths` frontmatter scopes a rule to matching files and accepts a YAML list or a comma-separated string; a rule with `paths` loads only when Claude works with a matching file | Claude Code | memory docs, "Path-specific rules" | yes |
+| A11 | the managed `CLAUDE.md` lives at `/etc/claude-code/CLAUDE.md` (Linux, WSL) or `/Library/Application Support/ClaudeCode/CLAUDE.md` (macOS), cannot be excluded, and loads alongside `AGENTS.md` | Claude Code | memory docs, "Deploy organization-wide CLAUDE.md" | yes |
+| A12 | context files raise inference cost by over 20% and do not generally improve task success; agents follow their instructions; repository overviews do not help | Claude Code, Codex, Qwen Code | Gloaguen et al., arXiv 2602.11988 (ICLR 2026) | yes |
+| A13 | instruction following degrades as the number of instructions grows (the best model: 68% at 500); models favor earlier instructions | 20 models | Jaroslawicz et al., IFScale, arXiv 2507.11538 (NeurIPS 2025) | yes, no onset density |
+| A14 | an import is `@` at the start of a line or after whitespace | Claude Code | the docs show examples only | no: the probe assumes it |
+| A15 | `paths` patterns follow glob syntax (`src/**/*.{ts,tsx}` in the docs) | Claude Code | memory docs examples | partly: matching details are not documented |
+
+Not probed yet: commands that do not exist (`/doctor prompt-audit` reports them in Claude
+Code), the number of instructions (A13 gives no onset density), the order of rules in the
+file (A13; review criterion 22), zero-exception rules left as text (A8; review criterion
+19, and the `agent-config` gate), imports outside the repository, the `claudeMd` key of
+managed settings, Markdown lint and readability scores (no source shows an effect on agent
+behavior), instruction files inside ignored dependency directories
+(`node_modules/*/AGENTS.md` loads when an agent reads a file there), sessions started in a
+subdirectory instead of the root, the Claude Code **Project instructions** setting
+(`claude-md-and-agents-md` loads both families) and `claudeMdExcludes`, which live in user
+settings, and JSON/SARIF output.
 
 ### The `skills` gate
 
@@ -321,9 +383,11 @@ disagree, so a CI gate would flake; ADR 1's reproducibility holds for the score.
 each gate's dependencies, tests, and release independent; shared code lives in
 `pkg/vitals-utils`. Revisit when a combined report or score is built.
 
-**NO content heuristics in probes** (keyword lists for "has a commands section", "has
+**NO meaning heuristics in probes** (keyword lists for "has a commands section", "has
 guardrails"): We reject because prose matching yields false positives and false
 negatives that a deterministic gate cannot justify; that judgment belongs to the review.
+Probes count syntax whose effect a source documents (block length, headings, emphasis
+markers, references that resolve), and leave what the text means to the review.
 
 ## Trade-offs
 
@@ -352,6 +416,21 @@ negatives that a deterministic gate cannot justify; that judgment belongs to the
   — 200-line target, four-hop imports, launch and on-demand loading, when AGENTS.md is
   read, the 4 MiB and 40,000-char limits, conflicts.
 - [Using CLAUDE.md files](https://claude.com/resources/articles/using-claude-md-files)
+- [Claude Code — Best practices](https://code.claude.com/docs/en/best-practices) — keep
+  `CLAUDE.md` short, emphasis that stops working, hooks and deny rules for zero-exception
+  rules, `/doctor prompt-audit` (read 2026-11-15).
+- [Claude Code in Action, "Configure Claude"](https://campus.datacamp.com/courses/claude-code-in-action/configure-claude?ex=1)
+  — Anthropic's course: the four memory locations, imports that do not reduce context,
+  specific and checkable rules, naming the replacement, emphasis as a budget.
+- [Gloaguen et al., *Evaluating AGENTS.md*](https://arxiv.org/abs/2602.11988) (ICLR 2026)
+  — context files: over 20% more inference cost, no general gain in success, overviews do
+  not help.
+- [Jaroslawicz et al., *How Many Instructions Can LLMs Follow at Once?*](https://arxiv.org/abs/2507.11538)
+  (NeurIPS 2025) — IFScale: degradation with instruction density, bias toward earlier
+  instructions.
+- [OpenCode source](https://github.com/anomalyco/opencode/tree/d759c548aa/packages/core/src)
+  at `d759c548aa`: `instruction-discovery.ts` and `config/plugin/instruction.ts` (an
+  `AGENTS.md` is injected verbatim).
 - [OpenCode source](https://github.com/anomalyco/opencode/tree/024a1462f5/packages/core/src)
   at `024a1462f5` (2026-11-14): `config/plugin/instruction.ts` (the `AGENTS.md` walk up
   to `$HOME` or the project root, configured `instructions`), `tool/plugin/read.ts`
