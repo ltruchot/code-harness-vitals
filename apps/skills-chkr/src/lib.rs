@@ -10,9 +10,7 @@
 #![cfg_attr(all(coverage_nightly, test), feature(coverage_attribute))]
 
 mod content;
-mod frontmatter;
 mod layout;
-mod links;
 mod probes;
 mod snapshot;
 mod tree;
