@@ -60,6 +60,7 @@ mod tests {
                 },
                 text: HEALTHY.to_owned(),
                 files: vec![PathBuf::from("SKILL.md")],
+                link: None,
             }],
             files: vec![PathBuf::from(".claude/skills/deploy/SKILL.md")],
             user: None,

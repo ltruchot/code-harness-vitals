@@ -100,19 +100,20 @@ fn one_sided(user: &User, personal: Option<&Path>) -> Vec<Finding> {
     )
 }
 
-/// `SK15`: no personal Claude Code skill shares a name with a skill at the repository root.
+/// `SK15`: no personal Claude Code skill shares a name with a skill that Claude Code loads
+/// from `.claude/skills` at the repository root, where each name is a single folder.
 fn shadowed(skills: &[Skill], user: &User, personal: Option<&Path>) -> Vec<Finding> {
-    let mut found: Vec<Finding> = personal
+    let found: Vec<Finding> = personal
         .and_then(|path| user.roots.iter().find(|root| root.path == path))
         .map_or_else(Vec::new, |root| {
             skills
                 .iter()
                 .filter(|skill| skill.place.scope.as_os_str().is_empty())
+                .filter(|skill| skill.place.root.claude_reads())
                 .filter(|skill| root.skills.contains(&skill.place.name))
                 .map(|skill| shadow(&root.path, skill))
                 .collect()
         });
-    found.dedup_by(|a, b| a.evidence() == b.evidence());
     or_pass(
         found,
         Finding::new(
@@ -166,6 +167,7 @@ mod tests {
             },
             text: String::new(),
             files: Vec::new(),
+            link: None,
         }
     }
 
@@ -242,11 +244,17 @@ mod tests {
         let found = run(
             vec![
                 skill("", Root::Claude, "deploy"),
-                skill("", Root::Agents, "deploy"),
-                skill("pkg", Root::Claude, "lint"),
                 skill("", Root::Claude, "solo"),
+                // Sorted by root, a second copy of a name is not next to the first.
+                skill("", Root::Agents, "deploy"),
+                // Claude Code never loads this one, so the personal copy shadows nothing.
+                skill("", Root::Agents, "opencode-only"),
+                skill("pkg", Root::Claude, "lint"),
             ],
-            vec![root("/home/dev/.claude/skills", &["deploy", "lint"])],
+            vec![root(
+                "/home/dev/.claude/skills",
+                &["deploy", "lint", "opencode-only"],
+            )],
         );
         assert_eq!(
             evidence(&found, "SK15"),

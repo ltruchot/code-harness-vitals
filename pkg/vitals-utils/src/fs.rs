@@ -122,10 +122,30 @@ pub fn home_dir() -> Option<PathBuf> {
 ///
 /// [`Error::Walk`] when a directory cannot be read.
 pub fn project_files(root: &Path) -> Result<Vec<PathBuf>, Error> {
-    WalkBuilder::new(root)
-        .hidden(false)
-        .git_global(false)
-        .require_git(false)
+    walk(
+        root,
+        WalkBuilder::new(root)
+            .hidden(false)
+            .git_global(false)
+            .require_git(false),
+    )
+}
+
+/// Every file and symbolic link under `dir`, relative to it, with no ignore rule applied:
+/// the tree an agent loads from a skill root, which no `.gitignore` filters.
+///
+/// `dir` itself is followed when it is a symbolic link; links below it are listed, not
+/// followed. `.git/` is skipped.
+///
+/// # Errors
+///
+/// [`Error::Walk`] when `dir` does not exist or a directory cannot be read.
+pub fn tree_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    walk(dir, WalkBuilder::new(dir).standard_filters(false))
+}
+
+fn walk(root: &Path, builder: &mut WalkBuilder) -> Result<Vec<PathBuf>, Error> {
+    builder
         .filter_entry(|entry| !skipped(entry.path()))
         .build()
         .filter_map(|entry| relative_file(root, entry).transpose())
@@ -141,9 +161,11 @@ fn relative_file(
     entry: Result<DirEntry, ignore::Error>,
 ) -> Result<Option<PathBuf>, Error> {
     let entry = entry?;
-    let listed = entry
-        .file_type()
-        .is_some_and(|kind| kind.is_file() || kind.is_symlink());
+    // A linked root is listed as a link at depth 0: it is the walk's root, not a file in it.
+    let listed = entry.depth() > 0
+        && entry
+            .file_type()
+            .is_some_and(|kind| kind.is_file() || kind.is_symlink());
     Ok(listed
         .then(|| entry.path().strip_prefix(root).ok().map(Path::to_path_buf))
         .flatten())
@@ -161,7 +183,7 @@ fn read_error(path: &Path, source: std::io::Error) -> Error {
 mod tests {
     use super::{
         canonical, exists, home_dir, link_target, parent_dirs, project_files, read_optional,
-        require_dir,
+        require_dir, tree_files,
     };
     use crate::error::Error;
     use std::fs;
@@ -247,6 +269,32 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert!(matches!(
             project_files(&dir.path().join("missing")),
+            Err(Error::Walk(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tree_files_ignores_no_rule_and_follows_only_a_linked_root() {
+        let dir = tree(&[
+            "real/.gitignore",
+            "real/a/SKILL.md",
+            "real/.hidden/x.md",
+            "real/.git/HEAD",
+            "elsewhere/b/SKILL.md",
+        ]);
+        fs::write(dir.path().join("real/.gitignore"), "*\n").unwrap();
+        std::os::unix::fs::symlink("../elsewhere/b", dir.path().join("real/b")).unwrap();
+        std::os::unix::fs::symlink("real", dir.path().join("link")).unwrap();
+        let mut files = tree_files(&dir.path().join("link")).unwrap();
+        files.sort();
+        let expected: Vec<std::path::PathBuf> = [".gitignore", ".hidden/x.md", "a/SKILL.md", "b"]
+            .iter()
+            .map(Into::into)
+            .collect();
+        assert_eq!(files, expected);
+        assert!(matches!(
+            tree_files(&dir.path().join("missing")),
             Err(Error::Walk(_))
         ));
     }

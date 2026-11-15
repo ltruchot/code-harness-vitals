@@ -8,7 +8,7 @@ use vitals_utils::{Finding, TextSize, Verdict, or_pass};
 use crate::frontmatter::{self, Field, Frontmatter, Value};
 use crate::links;
 use crate::probes::{DESCRIPTION, LINE_LIMIT, no_skill};
-use crate::snapshot::{Skill, Snapshot};
+use crate::snapshot::{Link, Skill, Snapshot};
 
 /// A skill with its frontmatter read.
 struct Judged<'a> {
@@ -335,13 +335,9 @@ fn short(judged: &Judged<'_>) -> Option<Finding> {
 
 /// `SK12`: every relative link in `SKILL.md` points to a file or directory that exists.
 fn references(judged: &Judged<'_>, repository: &[PathBuf]) -> Vec<Finding> {
-    let dir = judged.skill.place.dir();
     links::targets(&judged.skill.text)
         .into_iter()
-        .filter(|target| {
-            links::resolve(&dir, target)
-                .is_some_and(|path| !present(&path, &dir, &judged.skill.files, repository))
-        })
+        .filter(|target| broken(judged.skill, target, repository))
         .map(|target| {
             judged
                 .finding(
@@ -354,14 +350,34 @@ fn references(judged: &Judged<'_>, repository: &[PathBuf]) -> Vec<Finding> {
         .collect()
 }
 
-/// Whether `path` (relative to the repository root) is a file or a directory: looked up in
-/// the skill's own files when it is inside the skill folder `dir`, else in the repository.
-fn present(path: &Path, dir: &Path, own: &[PathBuf], repository: &[PathBuf]) -> bool {
-    let listed = |files: &[PathBuf], target: &Path| {
-        target.as_os_str().is_empty() || files.iter().any(|file| file.starts_with(target))
+/// Whether `target` resolves to nothing. Inside the skill folder it is looked up in the
+/// skill's own files, else in the repository. A link that leaves a symbolic-link folder
+/// resolves from where the folder is linked (a path read as written) or from where it
+/// really is (the disk): either passes. Behind a folder outside the repository, or when it
+/// climbs out of the repository, it is not judged.
+fn broken(skill: &Skill, target: &str, repository: &[PathBuf]) -> bool {
+    let dir = skill.place.dir();
+    let Some(path) = links::resolve(&dir, target) else {
+        return false;
     };
-    path.strip_prefix(dir)
-        .map_or_else(|_| listed(repository, path), |inside| listed(own, inside))
+    if let Ok(inside) = path.strip_prefix(&dir) {
+        return !listed(&skill.files, inside);
+    }
+    let missing = !listed(repository, &path);
+    match &skill.link {
+        None => missing,
+        Some(Link::Outside) => false,
+        Some(Link::Inside(real)) => {
+            missing
+                && links::resolve(real, target)
+                    .is_some_and(|physical| !listed(repository, &physical))
+        }
+    }
+}
+
+/// Whether `target` is a file of `files`, or a directory holding one.
+fn listed(files: &[PathBuf], target: &Path) -> bool {
+    target.as_os_str().is_empty() || files.iter().any(|file| file.starts_with(target))
 }
 
 #[cfg(test)]
@@ -370,7 +386,7 @@ mod tests {
     use super::{findings, spec_name};
     use crate::layout::{Place, Root};
     use crate::probes::DESCRIPTION;
-    use crate::snapshot::{Skill, Snapshot};
+    use crate::snapshot::{Link, Skill, Snapshot};
     use std::path::PathBuf;
     use vitals_utils::{Finding, Verdict};
 
@@ -383,6 +399,7 @@ mod tests {
             },
             text: text.to_owned(),
             files: files.iter().map(PathBuf::from).collect(),
+            link: None,
         }
     }
 
@@ -620,6 +637,36 @@ mod tests {
                 "links to `references/missing.md`, which does not exist",
                 "links to `../../../docs/old.md`, which does not exist",
             ]
+        );
+    }
+
+    #[test]
+    fn links_out_of_a_linked_folder_resolve_from_either_side() {
+        let text = format!(
+            "{}[real](../common.md) [linked](../deploy/SKILL.md) [gone](../gone.md)\n",
+            front("review", "")
+        );
+        let linked = |link| Skill {
+            link: Some(link),
+            ..skill("review", &text, &["SKILL.md"])
+        };
+        let repository = &["shared/common.md", ".claude/skills/deploy/SKILL.md"];
+        let broken = |skill| -> Vec<String> {
+            run(vec![skill], repository)
+                .iter()
+                .filter(|f| f.probe() == "SK12" && f.verdict() == Verdict::Fail)
+                .map(|f| f.message().to_owned())
+                .collect()
+        };
+        assert_eq!(
+            broken(linked(Link::Inside(PathBuf::from("shared/review")))),
+            ["links to `../gone.md`, which does not exist"]
+        );
+        assert_eq!(broken(linked(Link::Outside)), Vec::<String>::new());
+        assert_eq!(
+            broken(skill("review", &text, &["SKILL.md"])).len(),
+            2,
+            "a plain folder resolves from where it is"
         );
     }
 }

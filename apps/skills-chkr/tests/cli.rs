@@ -61,7 +61,7 @@ fn a_healthy_repository_prints_every_probe_and_exits_zero() {
         "[pass] SK01 .: 1 project skill\n\
          [pass] SK02 .: every skill is in a .claude/skills root, which both agents read\n\
          [pass] SK03 .: one copy of each skill name\n\
-         [pass] SK04 .: every file in the skill roots belongs to a <name>/SKILL.md skill\n\
+         [pass] SK04 .: no skill file in the skill roots that only one agent, or neither, loads\n\
          [pass] SK05 .: every skill root is at the repository root\n\
          [pass] SK06 .: every SKILL.md opens with frontmatter that YAML accepts\n\
          [pass] SK07 .: every skill has a description to match\n\
@@ -129,8 +129,22 @@ fn loose_files_and_case_variants_in_a_skill_root_warn() {
     gate(&repo(&[
         (".claude/skills/notes.md", "# notes\n"),
         (".claude/skills/lower/skill.md", &skill("lower", "")),
+        (
+            ".claude/skills/ops/deploy-web/SKILL.md",
+            &skill("deploy-web", ""),
+        ),
+        (".claude/skills/kept/SKILL.md", &skill("kept", "")),
+        (".claude/skills/kept/examples/SKILL.md", "# an example\n"),
     ]))
     .code(0)
+    .stdout(contains(
+        "[warn] SK04 .claude/skills/ops/deploy-web/SKILL.md: OpenCode loads this nested folder \
+         as a skill named `deploy-web`",
+    ))
+    .stdout(contains(
+        "fix: move it to .claude/skills/deploy-web/SKILL.md",
+    ))
+    .stdout(contains(".claude/skills/kept/examples/SKILL.md:").not())
     .stdout(contains(
         "[warn] SK04 .claude/skills/notes.md: OpenCode loads this file as a skill named `notes`",
     ))
@@ -282,9 +296,13 @@ fn a_symbolic_link_skill_folder_is_followed() {
     let dir = repo(&[
         (
             "shared/review/SKILL.md",
-            &skill("review", "Read [the rubric](rubric.md).\n"),
+            &skill(
+                "review",
+                "Read [the rubric](rubric.md) and [the shared notes](../common.md).\n",
+            ),
         ),
         ("shared/review/rubric.md", "1. x\n"),
+        ("shared/common.md", "- shared\n"),
     ]);
     std::os::unix::fs::symlink(
         "../../shared/review",
@@ -313,6 +331,55 @@ fn ignored_and_worktree_directories_are_not_read() {
     .stdout(contains(
         "[pass] SK13 .: 1 skill: .claude/skills/deploy/SKILL.md",
     ));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_skill_root_that_is_a_symbolic_link_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), ".agents/skills/deploy/SKILL.md", DEPLOY);
+    write(
+        dir.path(),
+        ".agents/skills/deploy/references/checklist.md",
+        "- x\n",
+    );
+    fs::create_dir(dir.path().join(".claude")).unwrap();
+    std::os::unix::fs::symlink("../.agents/skills", dir.path().join(".claude/skills")).unwrap();
+    gate(&dir)
+        .code(0)
+        .stdout(contains(
+            "[pass] SK13 .: 2 skills: .claude/skills/deploy/SKILL.md, \
+             .agents/skills/deploy/SKILL.md",
+        ))
+        .stdout(contains("[warn] SK02").not())
+        .stdout(contains("[pass] SK12 .: every relative link resolves"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symbolic_link_claude_directory_is_read() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "shared/.claude/skills/deploy/SKILL.md", DEPLOY);
+    write(
+        dir.path(),
+        "shared/.claude/skills/deploy/references/checklist.md",
+        "- x\n",
+    );
+    std::os::unix::fs::symlink("shared/.claude", dir.path().join(".claude")).unwrap();
+    gate(&dir)
+        .code(0)
+        .stdout(contains("[pass] SK01"))
+        .stdout(contains(".claude/skills/deploy/SKILL.md"));
+}
+
+#[test]
+fn ignore_rules_do_not_hide_a_skill_root() {
+    gate(&repo(&[(".gitignore", ".claude/\n")]))
+        .code(0)
+        .stdout(contains(
+            "[pass] SK13 .: 1 skill: .claude/skills/deploy/SKILL.md",
+        ))
+        .stdout(contains("[pass] SK12 .: every relative link resolves"));
 }
 
 /// `<tmp>/home` is `$HOME`; the repository is `<tmp>/home/work/repo`.
@@ -391,6 +458,26 @@ fn symbolic_link_folders_count_in_roots_outside_the_repository() {
         .stdout(contains(
             "OpenCode loads these skills in every session here (linked, team)",
         ));
+}
+
+#[test]
+fn a_home_directory_that_ignores_everything_still_shows_its_skill_roots() {
+    let (_dir, home, repo) = user_tree();
+    write(&home, ".gitignore", "*\n");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    chkr()
+        .env("HOME", &home)
+        .arg(&repo)
+        .assert()
+        .code(0)
+        .stdout(contains(
+            "[pass] SK13 .: 1 skill: .claude/skills/deploy/SKILL.md",
+        ))
+        .stdout(contains(
+            "OpenCode loads these skills in every session here (team)",
+        ))
+        .stdout(contains("personal skills only OpenCode loads (other)"))
+        .stdout(contains("[warn] SK15 (user scope)"));
 }
 
 #[test]

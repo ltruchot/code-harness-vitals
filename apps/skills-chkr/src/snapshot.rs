@@ -1,12 +1,13 @@
 //! Boundary: reads, once, every file the probes judge. All I/O goes through
 //! [`vitals_utils::fs`]; the result is a plain value.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use vitals_utils::markers::SKILL_ROOTS;
 use vitals_utils::{Error, Reach, fs};
 
-use crate::layout::{Place, SKILL_MD, folder_place, skill_place};
+use crate::layout::{Place, Root, SKILL_MD, Shape, locate, place, shape};
 use crate::user::HOME_ROOTS;
 
 /// One skill in the repository.
@@ -17,6 +18,17 @@ pub(crate) struct Skill {
     pub(crate) text: String,
     /// Every file in the skill directory, relative to it (symbolic-link folders followed).
     pub(crate) files: Vec<PathBuf>,
+    /// Where the folder really is, when it is a symbolic link.
+    pub(crate) link: Option<Link>,
+}
+
+/// The real directory of a symbolic-link skill folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Link {
+    /// Relative to the repository root.
+    Inside(PathBuf),
+    /// Outside the repository.
+    Outside,
 }
 
 /// A skill root outside the repository and the skills it holds.
@@ -49,8 +61,15 @@ pub(crate) struct Snapshot {
 
 pub(crate) fn read(root: &Path, reach: Reach) -> Result<Snapshot, Error> {
     fs::require_dir(root)?;
-    let mut files = fs::project_files(root)?;
+    let walked = fs::project_files(root)?;
+    let mut files = root_dirs(&walked)
+        .into_iter()
+        .map(|dir| root_files(root, &dir))
+        .collect::<Result<Vec<_>, _>>()?
+        .concat();
+    files.extend(walked);
     files.sort();
+    files.dedup();
     Ok(Snapshot {
         skills: skills(root, &files)?,
         user: reach
@@ -61,44 +80,115 @@ pub(crate) fn read(root: &Path, reach: Reach) -> Result<Snapshot, Error> {
     })
 }
 
+/// Every skill root the walk can miss, relative to the repository root: the four at the
+/// root, each root the walk crossed, and each root behind a symbolic link (`.claude`, or
+/// `.claude/skills` itself). Both agents read a skill root whole, ignore rules or not.
+fn root_dirs(walked: &[PathBuf]) -> BTreeSet<PathBuf> {
+    let crossed = walked.iter().flat_map(|path| {
+        let linked =
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map_or_else(Vec::new, |name| {
+                    let scope = path.parent().unwrap_or_else(|| Path::new(""));
+                    Root::ALL
+                        .into_iter()
+                        .filter(|root| root.path().split('/').next() == Some(name))
+                        .map(|root| scope.join(root.path()))
+                        .collect()
+                });
+        locate(path)
+            .map(|found| found.root_dir())
+            .into_iter()
+            .chain(linked)
+    });
+    Root::ALL
+        .into_iter()
+        .map(|root| PathBuf::from(root.path()))
+        .chain(crossed)
+        .collect()
+}
+
+/// The files of the skill root `dir`, relative to the repository root; none when it is
+/// not a directory.
+fn root_files(root: &Path, dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let on_disk = root.join(dir);
+    if !fs::exists(&on_disk.join("."))? {
+        return Ok(Vec::new());
+    }
+    Ok(fs::tree_files(&on_disk)?
+        .into_iter()
+        .map(|file| dir.join(file))
+        .collect())
+}
+
 fn skills(root: &Path, files: &[PathBuf]) -> Result<Vec<Skill>, Error> {
     let mut places = files
         .iter()
-        .map(|path| place(root, path))
+        .map(|path| skill_place(root, path))
         .filter_map(Result::transpose)
         .collect::<Result<Vec<_>, _>>()?;
     places.sort();
     places.dedup();
     places
         .into_iter()
-        .map(|place| skill(root, place))
+        .map(|place| skill(root, place, files))
         .filter_map(Result::transpose)
         .collect()
 }
 
 /// The skill that `path` makes: its `SKILL.md`, or a symbolic-link folder holding one.
-fn place(root: &Path, path: &Path) -> Result<Option<Place>, Error> {
-    if let Some(place) = skill_place(path) {
-        return Ok(Some(place));
-    }
-    let Some(place) = folder_place(path) else {
+fn skill_place(root: &Path, path: &Path) -> Result<Option<Place>, Error> {
+    let Some((place, found)) = place(path) else {
         return Ok(None);
     };
-    let on_disk = root.join(path);
-    let linked = fs::link_target(&on_disk)?.is_some() && fs::exists(&on_disk.join(SKILL_MD))?;
-    Ok(linked.then_some(place))
+    let made = match found {
+        Shape::SkillMd => true,
+        Shape::Folder => linked_skill(&root.join(path))?,
+    };
+    Ok(made.then_some(place))
 }
 
-fn skill(root: &Path, place: Place) -> Result<Option<Skill>, Error> {
+/// Whether `dir` is a symbolic link to a folder that holds `SKILL.md`.
+fn linked_skill(dir: &Path) -> Result<bool, Error> {
+    Ok(fs::link_target(dir)?.is_some() && fs::exists(&dir.join(SKILL_MD))?)
+}
+
+fn skill(root: &Path, place: Place, listed: &[PathBuf]) -> Result<Option<Skill>, Error> {
     let dir = root.join(place.dir());
     let Some(text) = fs::read_optional(&dir.join(SKILL_MD))? else {
         return Ok(None);
     };
-    let mut files = fs::project_files(&dir)?;
+    let link = fs::link_target(&dir)?
+        .map(|_| real(root, &dir))
+        .transpose()?;
+    // The walk lists a linked folder as one entry; only a plain folder's files are in it.
+    let mut files = if link.is_some() {
+        fs::tree_files(&dir)?
+    } else {
+        let prefix = place.dir();
+        listed
+            .iter()
+            .filter_map(|file| file.strip_prefix(&prefix).ok())
+            .map(Path::to_path_buf)
+            .collect()
+    };
     files.sort();
-    Ok(Some(Skill { place, text, files }))
+    Ok(Some(Skill {
+        place,
+        text,
+        files,
+        link,
+    }))
 }
 
+/// Where the linked folder `dir` really is.
+fn real(root: &Path, dir: &Path) -> Result<Link, Error> {
+    let target = fs::canonical(dir)?;
+    let base = fs::canonical(root)?;
+    Ok(target
+        .strip_prefix(&base)
+        .map_or(Link::Outside, |inside| Link::Inside(inside.to_path_buf())))
+}
 fn user(root: &Path) -> Result<User, Error> {
     // `$HOME` may be a symbolic link; the parent walk is resolved, so resolve it too.
     let home = fs::home_dir().map(|home| fs::canonical(&home).unwrap_or(home));
@@ -126,7 +216,7 @@ fn outside_root(path: PathBuf) -> Result<Option<OutsideRoot>, Error> {
     if !fs::exists(&path)? {
         return Ok(None);
     }
-    let mut skills = fs::project_files(&path)?
+    let mut skills = fs::tree_files(&path)?
         .into_iter()
         .filter_map(|file| skill_name(&path, &file).transpose())
         .collect::<Result<Vec<_>, _>>()?;
@@ -135,17 +225,22 @@ fn outside_root(path: PathBuf) -> Result<Option<OutsideRoot>, Error> {
     Ok((!skills.is_empty()).then_some(OutsideRoot { path, skills }))
 }
 
-/// The skill name that `file` (relative to the root `dir`) makes: `<name>/SKILL.md`, or a
-/// symbolic-link folder `<name>` holding one.
+/// The skill name that `file` (relative to the root `dir`) makes; `None` for a path that
+/// is not UTF-8.
 fn skill_name(dir: &Path, file: &Path) -> Result<Option<String>, Error> {
-    let parts: Vec<&str> = file.iter().filter_map(|part| part.to_str()).collect();
-    match parts.as_slice() {
-        [name, SKILL_MD] => Ok(Some((*name).to_owned())),
-        [name] => {
-            let folder = dir.join(name);
-            let linked = fs::link_target(&folder)?.is_some() && fs::exists(&folder.join(SKILL_MD))?;
-            Ok(linked.then(|| (*name).to_owned()))
-        }
-        _ => Ok(None),
-    }
+    let Some(parts) = file
+        .iter()
+        .map(|part| part.to_str())
+        .collect::<Option<Vec<&str>>>()
+    else {
+        return Ok(None);
+    };
+    let Some((name, found)) = shape(&parts) else {
+        return Ok(None);
+    };
+    let made = match found {
+        Shape::SkillMd => true,
+        Shape::Folder => linked_skill(&dir.join(name))?,
+    };
+    Ok(made.then(|| name.to_owned()))
 }

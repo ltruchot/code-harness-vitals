@@ -142,8 +142,9 @@ fn diverging(skill: &Skill, others: &[&Skill]) -> Finding {
     )
 }
 
-/// `SK04`: every file in a skill root is part of a `<name>/SKILL.md` skill that both agents
-/// load the same way.
+/// `SK04`: no file in a skill root that only one agent, or neither, loads as a skill: a
+/// `*.md` file directly in the root, a case variant of `SKILL.md`, or a `SKILL.md` nested
+/// below a folder that has none.
 fn layout(files: &[PathBuf]) -> Vec<Finding> {
     let located: Vec<(&PathBuf, Located)> = files
         .iter()
@@ -167,47 +168,68 @@ fn layout(files: &[PathBuf]) -> Vec<Finding> {
             "SK04",
             Verdict::Pass,
             ".",
-            "every file in the skill roots belongs to a <name>/SKILL.md skill",
+            "no skill file in the skill roots that only one agent, or neither, loads",
         ),
     )
 }
 
 fn stray(path: &Path, found: &Located, files: &[PathBuf]) -> Option<Finding> {
+    let warn = |message: String, fix: String| {
+        Finding::new("SK04", Verdict::Warn, path, message).with_fix(fix)
+    };
+    let moved = |name: &str| {
+        format!(
+            "move it to {}",
+            found.root_dir().join(name).join(SKILL_MD).display()
+        )
+    };
     match found.rest.as_slice() {
         [file] => {
             let stem = file.strip_suffix(".md")?;
-            Some(
-                Finding::new(
-                    "SK04",
-                    Verdict::Warn,
-                    path,
-                    format!(
-                        "OpenCode loads this file as a skill named `{stem}`; Claude Code loads \
-                         only <name>/SKILL.md"
-                    ),
-                )
-                .with_fix(format!(
-                    "move it to {}",
-                    found.root_dir().join(stem).join(SKILL_MD).display()
-                )),
-            )
+            Some(warn(
+                format!(
+                    "OpenCode loads this file as a skill named `{stem}`; Claude Code loads \
+                     only <name>/SKILL.md"
+                ),
+                moved(stem),
+            ))
         }
         [name, file] => {
             let exact = found.root_dir().join(name).join(SKILL_MD);
             let variant = file != SKILL_MD && file.eq_ignore_ascii_case(SKILL_MD);
             (variant && !files.contains(&exact)).then(|| {
-                Finding::new(
-                    "SK04",
-                    Verdict::Warn,
-                    path,
+                warn(
                     "neither agent loads this skill: both look for SKILL.md exactly, and names \
-                     are case-sensitive on Linux and in CI",
+                     are case-sensitive on Linux and in CI"
+                        .to_owned(),
+                    format!("rename it to {}", exact.display()),
                 )
-                .with_fix(format!("rename it to {}", exact.display()))
             })
         }
+        [group, .., last] if last == SKILL_MD => nested_skill(path, found, group, files),
         _ => None,
     }
+}
+
+/// A `SKILL.md` below `<root>/<group>/`, where `group` holds no `SKILL.md` of its own.
+fn nested_skill(path: &Path, found: &Located, group: &str, files: &[PathBuf]) -> Option<Finding> {
+    let first = found.root_dir().join(group).join(SKILL_MD);
+    let name = path.parent()?.file_name()?.to_str()?;
+    (!files.contains(&first)).then(|| {
+        Finding::new(
+            "SK04",
+            Verdict::Warn,
+            path,
+            format!(
+                "OpenCode loads this nested folder as a skill named `{name}`; Claude Code \
+                 documents only <name>/SKILL.md directly in the skill root"
+            ),
+        )
+        .with_fix(format!(
+            "move it to {}",
+            found.root_dir().join(name).join(SKILL_MD).display()
+        ))
+    })
 }
 
 /// `SK05`: skill roots below the repository root load differently in each agent.
@@ -294,6 +316,7 @@ mod tests {
             },
             text: text.to_owned(),
             files: vec![PathBuf::from("SKILL.md")],
+            link: None,
         }
     }
 
