@@ -38,12 +38,17 @@ with per-pillar levels, stable exit codes and JSON/SARIF output for CI.
 
 | Gate | Pillar | Deterministic probes (Rust) | Agent review (skill, advisory) | Status |
 | ---- | ------ | --------------------------- | ------------------------------ | ------ |
-| [`agents-md`](apps/agents-md-chkr/) | 1 | `AM01`–`AM15`, below | [`agents-md-review`](apps/agents-md-chkr/skills/agents-md-review/SKILL.md): 18-criterion rubric | ✅ |
+| [`agents-md`](apps/agents-md-chkr/) | 1 | `AM01`–`AM21`, below | [`agents-md-review`](apps/agents-md-chkr/skills/agents-md-review/SKILL.md): 22-criterion rubric | ✅ |
 | [`skills`](apps/skills-chkr/) | 2 | `SK01`–`SK15`, below | [`skills-review`](apps/skills-chkr/skills/skills-review/SKILL.md): 12-criterion rubric | ✅ |
 | `codebase-memory` | 3 | a code-intelligence MCP server or plugin, wired in for both agents | - | ⏳ |
 | `context-limiting` | 4 | an output-capping tool or hook, wired in for both agents | - | ⏳ |
 | `commit-gates` | 5 | an active hook runner calling lint, format, types, tests, vulnerability and secret scans; CI runs the same | fit of the gate list to the stack | ⏳ |
 | `agent-config` | 6 | permission lists, pinned MCP servers, auto-approving hooks | - | ⏳ |
+
+Each gate section opens with a TL;DR: a checked box is decided by the gate's probes, an
+open box is left to its review skill or not probed yet. Every probe cites its source:
+the agents' docs, their source code, or a published study; a threshold with no source is
+named as this project's choice.
 
 ### `agents-md`
 
@@ -52,37 +57,77 @@ cargo agents-md-chkr /path/to/repo              # exit 0: no fail · 1: a probe 
 cargo agents-md-chkr --repo-only /path/to/repo  # CI: skip the parent directories and home
 ```
 
-Instruction files cascade: Claude Code loads every `CLAUDE.md` from the working directory
-up to `/`, and one of them anywhere on that path turns off every `AGENTS.md`; OpenCode
-loads every `AGENTS.md` up to `$HOME` and never reads `CLAUDE.md`. Both load
-subdirectory files as they work there. The gate checks the whole cascade, in the
+**TL;DR**
+
+- [x] `AGENTS.md` is the rules file, and no `CLAUDE.md` hides it from Claude Code, in the
+  repository or above it (`AM01`–`AM04`, `AM09`, `AM12`, `AM14`)
+- [x] Under budget as each agent loads it: 200 lines, 40,000 chars, imports and HTML
+  comments counted (`AM05`, `AM06`, `AM10`)
+- [x] A session after `/clear` resumes from `TODO.md`, and a kaizen skill turns friction
+  into rule edits (`AM07`, `AM08`)
+- [x] Both agents get the same rules: `.claude/rules` and imported files listed for
+  OpenCode, nothing only one agent reads (`AM11`, `AM12`, `AM15`, `AM16`, `AM21`)
+- [x] What the files point to exists: imports, repository paths, links, rule `paths`
+  (`AM16`, `AM19`, `AM20`)
+- [x] Headings and short blocks, emphasis spent on three rules at most (`AM17`, `AM18`)
+- [ ] Real commands, conventions, guardrails, reuse before create, rules that a hook
+  should enforce, rules that are checkable and name their replacement, the costly rules
+  first, reference data moved out, contradictions across the cascade: the review
+- [ ] Not probed yet: commands that do not exist, the number of instructions,
+  `node_modules/*/AGENTS.md`, the **Project instructions** setting and `claudeMdExcludes`
+
+**How the gate reads a repository.** Instruction files cascade: Claude Code loads every
+`CLAUDE.md` from the working directory up to `/`, and one of them anywhere on that path
+turns off every `AGENTS.md`; OpenCode loads every `AGENTS.md` up to `$HOME` and never reads
+`CLAUDE.md`. Both load subdirectory files as they work there. They also load different
+text from one file: Claude Code strips block HTML comments and expands `@path` imports (four
+hops), OpenCode injects the file verbatim, so an import in `AGENTS.md` never reaches
+OpenCode unless `opencode.json` lists the file. The gate checks the whole cascade, in the
 repository and, as user-scope findings that never fail the gate, above it
 ([ADR 4](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md#the-agents-md-gate)).
 
-| Probe | Checks | Fails or warns when |
-| ----- | ------ | ------------------- |
-| `AM01` | `AGENTS.md` at the root | fail: missing (the fix names a `CLAUDE.md` to rename) |
-| `AM02` | root `CLAUDE.md` | fail: it has its own content, so Claude Code skips `AGENTS.md`; a bridge (`@AGENTS.md`) or a symlink passes |
-| `AM03` | `.claude/CLAUDE.md` | fail: same as `AM02` (bridge: `@../AGENTS.md`) |
-| `AM04` | `CLAUDE.local.md` | warn: present with no bridge, so Claude Code skips `AGENTS.md` on that machine |
-| `AM05` | lines | warn above 200, fail above 500 |
-| `AM06` | chars | fail above 40,000 |
-| `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist |
-| `AM08` | continuous improvement | warn: no `kaizen` skill in `.claude/skills/` (Claude Code reads no other root); the fix points to [qol-mini](https://github.com/ltruchot/qol-mini-4-ai-tui) |
-| `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail: own rules that OpenCode never reads and that hide the sibling `AGENTS.md` from Claude Code; warn: nested `CLAUDE.local.md` |
-| `AM10` | nested budgets | `AM05`/`AM06` on every nested instruction file and `.claude/rules` file |
-| `AM11` | `.claude/rules` parity | warn: rules files that `opencode.json` `instructions` does not list |
-| `AM12` | names an agent skips | warn: `.claude/AGENTS.md`, `AGENTS.local.md`, `AGENTS.override.md`, `agents.md` |
-| `AM13` | cascade inventory | lists every nested instruction file |
-| `AM14` | user scope: `CLAUDE.md` above the repository | warn: Claude Code loads it and skips every `AGENTS.md` (`~/.claude/CLAUDE.md` exempt) |
-| `AM15` | user scope: `AGENTS.md` above the repository | warn: rules that teammates and CI do not have |
+**Why these checks.** Claude Code's docs target "under 200 lines per CLAUDE.md file.
+Longer files consume more context and reduce adherence", and ask for "markdown headers and
+bullets" over "dense paragraphs" ([memory]). Anthropic's course treats emphasis as a
+budget for "the two or three rules that hurt when broken" ([course]), and the best
+practices add that "adding IMPORTANT probably won't fix it" ([best]). A study of four
+agents on real issues found that context files raise inference cost by over 20% without
+improving success in general, and that repository overviews do not help ([eth]); another
+found that instruction following degrades as instructions accumulate, earlier ones first
+([ifscale]).
 
-The review skill checks what probes cannot: real commands, conventions, guardrails
-(think before coding, simplicity, surgical changes, verify in a loop), reuse before
-create, ADR discipline, rules hygiene, handoff and kaizen equivalents, blocks that belong
-in a skill, contradictions across the cascade, and rules only one agent sees. To use it, copy `apps/agents-md-chkr/skills/agents-md-review/` into
-`.claude/skills/` (Claude Code and OpenCode both read it), then ask your agent to review
-`AGENTS.md`.
+| Probe | Checks | Fails or warns when | Source |
+| ----- | ------ | ------------------- | ------ |
+| `AM01` | `AGENTS.md` at the root | fail: missing (the fix names a `CLAUDE.md` to rename) | [memory], [oc] |
+| `AM02` | root `CLAUDE.md` | fail: it has its own content, so Claude Code skips `AGENTS.md`; a bridge (`@AGENTS.md`) or a symlink passes | [memory] |
+| `AM03` | `.claude/CLAUDE.md` | fail: same as `AM02` (bridge: `@../AGENTS.md`) | [memory] |
+| `AM04` | `CLAUDE.local.md` | warn: present with no bridge, so Claude Code skips `AGENTS.md` on that machine | [memory] |
+| `AM05` | lines, as loaded | warn above 200, fail above 500 (`AGENTS.md`, else the `CLAUDE.md` that loads) | [memory]; 500: kaizen cap |
+| `AM06` | chars, as loaded | fail above 40,000 | [memory] |
+| `AM07` | resume after `/clear` | warn: the first 10 lines do not name `TODO.md`, or it does not exist | [qol-mini] convention |
+| `AM08` | continuous improvement | warn: no `kaizen` skill in `.claude/skills/` (Claude Code reads no other root); the fix points to [qol-mini] | [skills-docs] |
+| `AM09` | nested `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` | fail: own rules that OpenCode never reads and that hide the sibling `AGENTS.md` from Claude Code; warn: nested `CLAUDE.local.md` | [memory], [oc] |
+| `AM10` | nested budgets | `AM05`/`AM06` on every nested instruction file and `.claude/rules` file | [memory] |
+| `AM11` | `.claude/rules` parity | warn: rules files that `opencode.json` `instructions` does not list | [memory], [oc] |
+| `AM12` | names an agent skips | warn: `.claude/AGENTS.md`, `AGENTS.local.md`, `AGENTS.override.md`, `agents.md` | [memory], [oc] |
+| `AM13` | cascade inventory | lists every nested instruction file | - |
+| `AM14` | user scope: `CLAUDE.md` above the repository | warn: Claude Code loads it and skips every `AGENTS.md` (`~/.claude/CLAUDE.md` exempt) | [memory] |
+| `AM15` | user scope: `AGENTS.md` above the repository | warn: rules that teammates and CI do not have | [oc] |
+| `AM16` | `@path` imports | warn: no file at the target, past four hops, or in an `AGENTS.md` a target that `opencode.json` does not list | [memory], [oc] |
+| `AM17` | structure | warn: a block (paragraph, list item, table row) over 400 chars; no heading in a file over 30 lines | [memory]; 400 and 30: project thresholds |
+| `AM18` | emphasis budget | warn: more than 3 markers (`IMPORTANT`, `MUST`, `NEVER`… in capitals, or bold inside a sentence) | [course], [best] |
+| `AM19` | references | warn: a backticked repository path or a relative link that resolves to nothing | [memory] (`/doctor prompt-audit`) |
+| `AM20` | rule `paths` | warn: unclosed frontmatter, a malformed `paths`, or a pattern that matches no file | [memory] |
+| `AM21` | user scope: managed `CLAUDE.md` | warn: `/etc/claude-code/CLAUDE.md` loads in every Claude Code session and no setting excludes it; OpenCode never reads it | [memory] |
+
+The review skill checks what probes cannot, against a 22-criterion rubric: real commands,
+conventions, guardrails (think before coding, simplicity, surgical changes, verify in a
+loop), reuse before create, ADR discipline, rules hygiene, handoff and kaizen equivalents,
+blocks and reference data that belong elsewhere, contradictions across the cascade, rules
+only one agent sees, zero-exception rules that a hook should enforce, emphasis and order,
+and rules that are checkable and name their replacement. To use it, copy
+`apps/agents-md-chkr/skills/agents-md-review/` into `.claude/skills/` (Claude Code and
+OpenCode both read it), then ask your agent to review `AGENTS.md`.
 
 ### `skills`
 
@@ -91,37 +136,62 @@ cargo skills-chkr /path/to/repo              # exit 0: no fail · 1: a probe fai
 cargo skills-chkr --repo-only /path/to/repo  # CI: skip the parent directories and home
 ```
 
-Both agents read `SKILL.md`, but not from the same places: Claude Code loads
-`.claude/skills/` only, from the working directory up to the repository root; OpenCode
-also loads `.agents/skills/` and `.opencode/skill(s)/`, from every directory up to `/`,
-and never the nested roots below its working directory. They also read different
-frontmatter fields and react differently to the same YAML mistake. The gate checks where
-each skill lives, its frontmatter, sizes, and links, and, as user-scope findings that
-never fail the gate, the skill roots above the repository
-([ADR 4](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md#the-skills-gate)).
+**TL;DR**
 
-| Probe | Checks | Fails or warns when |
-| ----- | ------ | ------------------- |
-| `SK01` | project skills exist | warn: none in any skill root |
-| `SK02` | both agents reach each skill | warn: a skill only in `.agents/skills/` or `.opencode/skill(s)/`, which Claude Code never loads |
-| `SK03` | one copy per name | warn: two roots hold the same skill name with different content |
-| `SK04` | layout | warn: a `*.md` file directly in a skill root (OpenCode only), `skill.md` instead of `SKILL.md` (neither agent), or a `SKILL.md` one folder too deep (OpenCode only) |
-| `SK05` | nested skill roots | warn: a skill root below the repository root, which OpenCode loads only in a session started there |
-| `SK06` | frontmatter | fail: no `---` on line 1, never closed, or an unquoted value YAML rejects (`: `, `[x] text`, a leading `` ` `` or `@`) |
-| `SK07` | description | fail: missing or not a string, unless `disable-model-invocation: true` |
-| `SK08` | description length | warn above 1,024 chars, fail above 1,536 (`description` + `when_to_use`) |
-| `SK09` | `when_to_use` | warn: OpenCode never reads it |
-| `SK10` | name | fail: reserved by Claude Code or not a string; warn: off the Agent Skills rule, or different from the folder |
-| `SK11` | lines | warn above 500 |
-| `SK12` | references | fail: a relative link, outside code, to a file that does not exist |
-| `SK13` | skill inventory | lists every skill |
-| `SK14` | user scope: skill roots only OpenCode reads | warn: in a parent directory, or `~/.agents/skills`, `~/.config/opencode/skill(s)` |
-| `SK15` | user scope: personal skills that shadow project ones | warn: Claude Code runs the personal copy, OpenCode the project one |
+- [x] Project skills exist where both agents load them: `.claude/skills/<name>/SKILL.md`
+  (`SK01`, `SK02`, `SK04`, `SK05`)
+- [x] One copy per name, in the repository and against personal skills (`SK03`, `SK15`)
+- [x] Frontmatter that both agents parse, a description to match, within length, a valid
+  name (`SK06`–`SK10`)
+- [x] Body under 500 lines, and every relative link resolves (`SK11`, `SK12`)
+- [x] User scope: skill roots above the repository that only OpenCode reads (`SK14`)
+- [ ] Descriptions that trigger, overlapping skills, invocation control, body cost and
+  order, script safety, Claude Code-only fields: the review
+- [ ] Not probed yet: script safety by an external scanner, `.claude/commands/`, skills
+  added by `opencode.json` or `--add-dir`, enterprise and plugin skills
+
+**How the gate reads a repository.** Both agents read `SKILL.md`, but not from the same
+places: Claude Code loads `.claude/skills/` only, from the working directory up to the
+repository root; OpenCode also loads `.agents/skills/` and `.opencode/skill(s)/`, from every
+directory up to `/`, and never the nested roots below its working directory. They also read
+different frontmatter fields and react differently to the same YAML mistake. The gate checks
+where each skill lives, its frontmatter, sizes, and links, and, as user-scope findings that
+never fail the gate, the skill roots above the repository
+([ADR 4](docs/architecture_decision_records/2026-11-14-adr4-gate-model.md#the-skills-gate),
+whose facts `C`, `S`, and `O` the Source column cites).
+
+| Probe | Checks | Fails or warns when | Source |
+| ----- | ------ | ------------------- | ------ |
+| `SK01` | project skills exist | warn: none in any skill root | [skills-docs] C1, [oc] O1 |
+| `SK02` | both agents reach each skill | warn: a skill only in `.agents/skills/` or `.opencode/skill(s)/`, which Claude Code never loads | C2, O1, O2 |
+| `SK03` | one copy per name | warn: two roots hold the same skill name with different content | C5, O10 |
+| `SK04` | layout | warn: a `*.md` file directly in a skill root (OpenCode only), `skill.md` instead of `SKILL.md` (neither agent), or a `SKILL.md` one folder too deep (OpenCode only) | C16, C17, O5 |
+| `SK05` | nested skill roots | warn: a skill root below the repository root, which OpenCode loads only in a session started there | C4, O4 |
+| `SK06` | frontmatter | fail: no `---` on line 1, never closed, or an unquoted value YAML rejects (`: `, `[x] text`, a leading `` ` `` or `@`) | C8, C9, [spec] S4, O8 |
+| `SK07` | description | fail: missing or not a string, unless `disable-model-invocation: true` | C10, O7, O9 |
+| `SK08` | description length | warn above 1,024 chars, fail above 1,536 (`description` + `when_to_use`) | S2, C11 |
+| `SK09` | `when_to_use` | warn: OpenCode never reads it | O7 |
+| `SK10` | name | fail: reserved by Claude Code or not a string; warn: off the Agent Skills rule, or different from the folder | C7, S1, O6, O7 |
+| `SK11` | lines | warn above 500 | C13, S3 |
+| `SK12` | references | fail: a relative link, outside code, to a file that does not exist | S3 |
+| `SK13` | skill inventory | lists every skill | - |
+| `SK14` | user scope: skill roots only OpenCode reads | warn: in a parent directory, or `~/.agents/skills`, `~/.config/opencode/skill(s)` | C3, O1, O3 |
+| `SK15` | user scope: personal skills that shadow project ones | warn: Claude Code runs the personal copy, OpenCode the project one | C5, O10 |
 
 The review skill checks what probes cannot: descriptions that trigger, overlapping
 skills, invocation control, body cost and order, script safety, and behavior that relies
 on Claude Code-only fields. To use it, copy `apps/skills-chkr/skills/skills-review/` into
 `.claude/skills/`, then ask your agent to review the skills.
+
+[memory]: https://code.claude.com/docs/en/memory
+[best]: https://code.claude.com/docs/en/best-practices
+[skills-docs]: https://code.claude.com/docs/en/skills
+[course]: https://campus.datacamp.com/courses/claude-code-in-action/configure-claude?ex=1
+[eth]: https://arxiv.org/abs/2602.11988
+[ifscale]: https://arxiv.org/abs/2507.11538
+[spec]: https://agentskills.io/specification
+[oc]: https://github.com/anomalyco/opencode/tree/d759c548aa/packages/core/src
+[qol-mini]: https://github.com/ltruchot/qol-mini-4-ai-tui
 
 ## Develop
 

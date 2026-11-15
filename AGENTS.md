@@ -5,12 +5,13 @@
 
 ## Project
 
-code-harness-vitals audits whether a repository is ready for agentic coding with
-Claude Code and OpenCode: instruction files, skills, codebase memory, context limiting,
-deterministic gates, and agent-config security. Product intent and scope live in
-`docs/architecture_decision_records/2026-11-13-adr1-main-intent.md`; read it before
-proposing features. Every check is a gate (ADR 4): deterministic Rust probes set the exit
-code and the score; an advisory review skill judges content. Read ADR 4 before adding one.
+- code-harness-vitals audits whether a repository is ready for agentic coding with Claude
+  Code and OpenCode: instruction files, skills, codebase memory, context limiting,
+  deterministic gates, and agent-config security.
+- Product intent and scope: `docs/architecture_decision_records/2026-11-13-adr1-main-intent.md`.
+  Read it before proposing features.
+- Every check is a gate (ADR 4): deterministic Rust probes set the exit code and the
+  score; an advisory review skill judges content. Read ADR 4 before adding one.
 
 ## Language (MANDATORY)
 
