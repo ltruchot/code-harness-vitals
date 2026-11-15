@@ -2,16 +2,18 @@
 
 ## Where we stopped
 Two stacked branches, one commit per layer (`.claude/skills/add-gate/`):
-- `gate/skills`: draft PR #1, CI green, `code-review` not run yet.
-- `gate/agents-md-content`, on top of `gate/skills`, not pushed, no PR: the `AM05`–`AM07`
-  fix (a `CLAUDE.md`-only repository was not judged) and the content probes `AM16`–`AM21`
-  (imports, structure, emphasis, references, rule `paths`, managed `CLAUDE.md`), with ADR 4
-  facts `A1`–`A15`, the 22-criterion rubric, and the README TL;DR format.
-  `cargo xtask check` passes (branch coverage 96.57%).
+- `gate/skills`: draft PR #1. `code-review high` ran; its 10 findings are fixed, local only:
+  `d0ad84a` (linked skill roots, ignore rules, SK04 nested, SK12 linked folders, SK15) on
+  `gate/skills`; the 3 scanner findings (frontmatter, links) in `vitals-utils` on
+  `gate/agents-md-content`, where the scanners now live.
+- `gate/agents-md-content`, rebased on `gate/skills`, not pushed, no PR: the `AM05`–`AM07`
+  fix and the content probes `AM16`–`AM21`, ADR 4 facts `A1`–`A15`, the 22-criterion
+  rubric, the README TL;DR format, and the scanner fixes.
+  `cargo xtask check` passes (branch coverage 95.83%).
 Next actions, in order:
-1. `code-review` on PR #1; fix in new commits on `gate/skills`; `gh pr ready 1`; merge.
-2. `git rebase main` on `gate/agents-md-content` (no PR yet, so rebase is allowed), push,
-   open its draft PR (`.claude/skills/add-gate/PR.md`), `code-review`, merge.
+1. `git push` `gate/skills` (PR #1, the user confirms first); CI green; `gh pr ready 1`; merge.
+2. `git rebase main` on `gate/agents-md-content`, push, open its draft PR
+   (`.claude/skills/add-gate/PR.md`), `code-review`, merge.
 3. The main checkout holds an older, uncommitted `TODO.md`: `git checkout TODO.md` there
    before pulling; then `git worktree remove .claude/worktrees/agent-af7db5ec9d62615ce`.
 Verified: `cargo agents-md-chkr --repo-only` on a 393-line `CLAUDE.md`-only project reports
